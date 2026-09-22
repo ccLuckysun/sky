@@ -1,0 +1,9 @@
+# macOS 目录元数据，每台机器自动生成
+.DS_Store
+
+# Nginx 运行时产物：日志、PID、临时目录，不是业务源码。
+# 本项目实际使用的 frontend/nginx-mac.conf 把日志和 PID 放在 /opt/homebrew/var/log/nginx/，
+# 而自带的 conf/nginx.conf 又把 error_log/pid/access_log 全部注释掉了，所以这里的文件不参与运行，
+# 留着只会把别的机器的旧 PID 和日志带进来。nginx 启动时会自行创建目录。
+frontend/nginx-1.20.2/logs/
+frontend/nginx-1.20.2/temp/

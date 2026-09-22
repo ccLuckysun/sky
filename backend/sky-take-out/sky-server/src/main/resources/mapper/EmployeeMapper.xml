@@ -2,4 +2,44 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd" >
 <mapper namespace="com.sky.mapper.EmployeeMapper">
+
+    <insert id="insert" parameterType="Employee" useGeneratedKeys="true" keyProperty="id">
+        insert into employee (name, username, password, phone, sex, id_number, status, create_time, update_time,
+                              create_user, update_user)
+        values (#{name}, #{username}, #{password}, #{phone}, #{sex}, #{idNumber}, #{status}, #{createTime},
+                #{updateTime}, #{createUser}, #{updateUser})
+    </insert>
+
+    <!-- 分页查询：password 列不参与查询，避免口令哈希进入内存和响应；分页由 PageHelper 在此 SQL 之上追加 limit。
+         排序按最后操作时间倒序并追加 id 兜底，保证翻页时记录顺序稳定、不会重复或漏行。 -->
+    <select id="pageQuery" resultType="Employee">
+        select id, username, name, phone, sex, id_number, status,
+               create_time, update_time, create_user, update_user
+        from employee
+        <where>
+            <if test="name != null and name != ''">
+                and name like concat('%', #{name}, '%')
+            </if>
+        </where>
+        order by update_time desc, id desc
+    </select>
+
+    <!-- 动态更新：只写入非 null 字段。调用方传 id + status + updateTime + updateUser 即可，
+         不会把 password、username 等未赋值的属性覆盖成 null。 -->
+    <update id="update" parameterType="Employee">
+        update employee
+        <set>
+            <if test="username != null">username = #{username},</if>
+            <if test="name != null">name = #{name},</if>
+            <if test="password != null">password = #{password},</if>
+            <if test="phone != null">phone = #{phone},</if>
+            <if test="sex != null">sex = #{sex},</if>
+            <if test="idNumber != null">id_number = #{idNumber},</if>
+            <if test="status != null">status = #{status},</if>
+            <if test="updateTime != null">update_time = #{updateTime},</if>
+            <if test="updateUser != null">update_user = #{updateUser},</if>
+        </set>
+        where id = #{id}
+    </update>
+
 </mapper>

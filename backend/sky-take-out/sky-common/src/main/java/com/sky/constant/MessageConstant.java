@@ -5,6 +5,13 @@ package com.sky.constant;
  */
 public class MessageConstant {
 
+    public static final String LOGIN_INPUT_EMPTY = "用户名和密码不能为空";
+    public static final String USERNAME_ALREADY_EXISTS = "用户名已存在";
+    public static final String ALREADY_EXISTS = "已存在";
+    public static final String PAGE_PARAM_ERROR = "页码和每页记录数必须为正整数";
+    public static final String EMPLOYEE_ID_EMPTY = "员工id不能为空";
+    public static final String STATUS_ERROR = "状态值不合法，只能为1(启用)或0(禁用)";
+
     public static final String PASSWORD_ERROR = "密码错误";
     public static final String ACCOUNT_NOT_FOUND = "账号不存在";
     public static final String ACCOUNT_LOCKED = "账号被锁定";
