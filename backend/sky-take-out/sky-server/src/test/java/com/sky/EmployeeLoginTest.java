@@ -191,13 +191,15 @@ class EmployeeLoginTest {
     }
 
     @Test
-    void authenticatedInsertUsesTokenEmployeeForAuditFieldsAndCleansContext() throws Exception {
+    void authenticatedInsertLeavesAuditFieldsToTheAspectAndCleansContext() throws Exception {
         when(mapper.getById(7L)).thenReturn(employee(1));
         doAnswer(invocation -> {
             Employee inserted = invocation.getArgument(0);
-            assertEquals(7L, inserted.getCreateUser());
-            assertEquals(7L, inserted.getUpdateUser());
-            assertEquals(7L, BaseContext.getCurrentId());
+            //公共字段由 AutoFillAspect 填充，业务层不再自己设置；但调用 mapper 的那一刻登录上下文必须还在，
+            //切面读的就是这个 BaseContext（切面本身的验证见 AutoFillAspectTest）。
+            assertNull(inserted.getCreateUser());
+            assertNull(inserted.getUpdateUser());
+            assertEquals(7L, BaseContext.getCurrentId(), "切面取操作人时读的就是这个上下文");
             assertEquals(1, inserted.getStatus());
             return 1;
         }).when(mapper).insert(any(Employee.class));
@@ -228,10 +230,11 @@ class EmployeeLoginTest {
         assertNotEquals("123456", inserted.getPassword());
         assertTrue(encoder.matches("123456", inserted.getPassword()));
         assertEquals(1, inserted.getStatus());
-        assertEquals(7L, inserted.getCreateUser());
-        assertEquals(7L, inserted.getUpdateUser());
-        assertNotNull(inserted.getCreateTime());
-        assertEquals(inserted.getCreateTime(), inserted.getUpdateTime());
+        //客户端传来的 createUser=999 既没有被采纳，业务层也不再自己填：四个公共字段全部留给 AutoFillAspect。
+        assertNull(inserted.getCreateUser());
+        assertNull(inserted.getUpdateUser());
+        assertNull(inserted.getCreateTime());
+        assertNull(inserted.getUpdateTime());
     }
 
     @ParameterizedTest

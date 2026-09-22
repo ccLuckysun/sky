@@ -1,13 +1,13 @@
 # 项目速查：苍穹外卖（waimai）
 
-> 更新日期：2026-09-22。依据当前工作区源码整理；工作区与最新提交一致，没有未提交改动。
+> 更新日期：2026-09-22。依据当前工作区源码整理；与最新提交是否一致以 `git status --short` 为准。
 > 初次整理为静态阅读；员工登录增量已补上令牌校验、数据库账号状态检查和自动化测试。各次增量见文末。
 
 ## 1. 先了解这几点
 
 - 项目是外卖管理系统的初始骨架，后端名称为“苍穹外卖”；前端页面标题/manifest 仍有“瑞吉外卖”，是同一份管理端资源。
 - 后端为 Java 17、Spring Boot 2.7.3、Maven 三模块工程，根 POM 在 `backend/sky-take-out/pom.xml`，不是仓库根目录。
-- **目前业务实现只有员工管理：登录、退出、分页查询、新增、编辑、启用/禁用和按 id 回显。** 菜品、套餐、订单等虽然已有 DTO/Entity/VO 和前端页面，但没有对应后端 Controller/Service/Mapper。
+- **目前业务实现只有员工管理和分类管理：员工为登录、退出、分页查询、新增、编辑、启用/禁用和按 id 回显；分类为新增、分页查询、删除、修改、启用/禁用和按类型查询。** 菜品、套餐、订单等虽然已有 DTO/Entity/VO 和前端页面，但没有对应后端 Controller/Service/Mapper。
 - 前端是 Nginx 配套的已构建管理端，缺少独立 `src/`、`package.json` 和锁文件；不能直接在此执行 `npm install/build`。JS Source Map 内包含部分原始源码，可辅助定位契约。
 - 服务默认端口：Nginx `80`、后端 `8080`、MySQL `3306`。浏览器的 `/api/...` 经 Nginx 转为后端 `/admin/...`。
 - 仓库缺少建表/初始化 SQL、数据库迁移、CI 和容器部署配置；已有员工登录自动化测试。本机已确认存在 employee 表，但其他环境仍需自行准备数据库。
@@ -37,22 +37,25 @@ waimai/
 │   │       ├── dto/                # 21 个输入/查询模型
 │   │       ├── entity/             # 11 个实体
 │   │       └── vo/                 # 17 个响应/统计模型
-│   └── sky-server/                 # 可运行服务，10 个主源码 Java 文件
+│   └── sky-server/                 # 可运行服务，18 个主源码 Java 文件
 │       ├── src/main/java/com/sky/
 │       │   ├── SkyApplication.java
+│       │   ├── annotation/AutoFill.java # 标记需要自动填充公共字段的 mapper 方法
+│       │   ├── aspect/AutoFillAspect.java # 切面：写入创建/修改时间与操作人
 │       │   ├── config/WebMvcConfiguration.java
 │       │   ├── config/SpringfoxConfiguration.java # Actuator/Swagger 扫描兼容
 │       │   ├── config/PasswordConfiguration.java # BCrypt PasswordEncoder
 │       │   ├── controller/admin/EmployeeController.java
+│       │   ├── controller/admin/CategoryController.java
 │       │   ├── handler/GlobalExceptionHandler.java
 │       │   ├── interceptor/JwtTokenAdminInterceptor.java
-│       │   ├── mapper/EmployeeMapper.java
-│       │   └── service/            # EmployeeService、impl/EmployeeServiceImpl
-│       ├── src/test/java/com/sky/  # 10 个测试类，其中 4 个真实 MySQL 联调需显式启用
+│       │   ├── mapper/             # EmployeeMapper、CategoryMapper、DishMapper、SetmealMapper
+│       │   └── service/            # EmployeeService、CategoryService 及 impl
+│       ├── src/test/java/com/sky/  # 12 个测试类，其中 5 个真实 MySQL 联调需显式启用
 │       └── src/main/resources/
 │           ├── application.yml
 │           ├── application-dev.yml
-│           └── mapper/EmployeeMapper.xml
+│           └── mapper/             # EmployeeMapper.xml、CategoryMapper.xml
 └── frontend/
     ├── nginx-mac.conf              # 当前机器的 macOS/Homebrew 部署配置
     └── nginx-1.20.2/
@@ -81,7 +84,7 @@ waimai/
 | 分页 / 文档 | PageHelper 1.3.0、Knife4j 3.0.2（Swagger 2），分页已用于员工分页查询 |
 | 模型/序列化 | Lombok 1.18.20、Jackson；sky-pojo 单独指定 jackson-databind 2.9.2 |
 | 认证 | jjwt 0.9.1，HS256，管理员请求头 `token` |
-| 预置依赖 | Redis、Spring Cache、WebSocket、AspectJ、POI、OSS、微信支付；依赖存在不代表业务已接入 |
+| 预置依赖 | Redis、Spring Cache、WebSocket、POI、OSS、微信支付；依赖存在不代表业务已接入。AspectJ（`aspectjweaver` + `aspectjrt`；Spring Boot 的 AOP 自动配置只要类路径上有 `org.aspectj.weaver.Advice` 就会开启，本项目**没有引入 `spring-boot-starter-aop`**）已用于公共字段自动填充，见第 15 节 |
 | 监控 | sky-server 已加入 Actuator 依赖；未自定义监控配置；SpringfoxConfiguration 过滤文档扫描中的 PathPattern 路由，保留实际监控端点 |
 | 前端 | Source Map 显示 Vue、TypeScript、Vue Router、Vuex、Element UI、Axios，另有图表等依赖 |
 
@@ -106,6 +109,12 @@ waimai/
 | GET | `/admin/employee/{id}` | 返回不含口令的员工详情，供编辑页回显 | `token` |
 | POST | `/admin/employee/status/{status}` | 路径 `status` 只能为 1 启用 / 0 禁用，Query `id` 必填；只改状态与审计列 | `token` |
 | POST | `/admin/employee/logout` | 直接返回成功，未撤销 JWT | `token` |
+| POST | `/admin/category` | JSON：`name`、`type`、`sort`；新增分类，状态固定为禁用 0 | `token` |
+| GET | `/admin/category/page` | Query：`page`、`pageSize` 必填，`name`、`type` 可选；返回 `{total, records}` | `token` |
+| DELETE | `/admin/category` | Query：`id`；分类下关联了菜品或套餐时拒绝删除 | `token` |
+| PUT | `/admin/category` | JSON：`id`、`type`、`name`、`sort`；改写这三列与修改审计列，不动 `status` | `token` |
+| POST | `/admin/category/status/{status}` | 路径 `status`，Query `id`；启用/禁用分类 | `token` |
+| GET | `/admin/category/list` | Query：`type` 可选；只返回 `status=1` 的分类 | `token` |
 
 响应统一为 `Result<T>`：`{"code":1,"msg":null,"data":...}`；业务失败由 `GlobalExceptionHandler` 捕获 `BaseException` 并返回 `code=0` 和消息，未设置特殊 HTTP 状态。分页模型是 `{total, records}`，员工分页查询已使用。
 
@@ -128,13 +137,13 @@ waimai/
 
 `WebMvcConfiguration` 拦截 `/admin/**`，仅排除 `/admin/employee/login`；非 HandlerMethod 放行。缺失、无效、过期、缺少有效 empId 或过期时间的令牌返回 HTTP 401 和 Result.error；有效令牌还会通过 EmployeeMapper.getById 查询数据库，拒绝不存在或未启用的员工。数据库故障不伪装为认证失败。
 
-新增员工由 Service 校验并拷贝 DTO（排除客户端 id），设置启用状态 `1`、默认密码 `123456` 的 BCrypt 哈希、创建/更新时间及当前员工的创建/修改人 ID。`EmployeeMapper.xml` 执行 INSERT，并通过 `useGeneratedKeys` 回填 ID；接口不返回该实体。
+新增员工由 Service 校验并拷贝 DTO（排除客户端 id），设置启用状态 `1`、默认密码 `123456` 的 BCrypt 哈希。四个审计字段（创建/修改时间、创建/修改人）不在这里设置，由 `AutoFillAspect` 在 mapper 调用前统一写入，见第 15 节。`EmployeeMapper.xml` 执行 INSERT，并通过 `useGeneratedKeys` 回填 ID；接口不返回该实体。
 
 员工分页查询由 Service 校验 `page`、`pageSize` 为正整数（查询参数缺失时基本类型默认为 0，会生成非法 limit），姓名去空白后为空视为不筛选。`EmployeeMapper.pageQuery` 返回 PageHelper 的 `Page`，Service 用 `try/finally` 调用 `PageHelper.clearPage()`，避免查询未执行时分页参数残留在 ThreadLocal。分页 SQL 位于 `EmployeeMapper.xml`，只查询非密码列，排序为 `update_time desc, id desc` 以保证翻页顺序稳定；Service 另外把返回实体的 password 置空，双重保证口令哈希不外泄。
 
 编辑、启用/禁用与按 id 回显都复用 `EmployeeMapper.xml` 里的动态 `update`（`<set>` 只写非 null 字段）：编辑只填五列，状态接口只填 `status`，两者因此都无法越权改到对方负责的列 —— 编辑改不了 `status` 与口令，状态接口也改不了姓名手机号。回显走 `EmployeeMapper.getDetailById`，列清单与 `pageQuery` 相同（不含 `password`）；没有复用拦截器的 `getById`，因为后者在每个受保护请求上都会执行，只需要 `id`、`status`。详见第 14 节。
 
-当前唯一实际访问的表为 `employee`，SQL 涉及：`id`、`name`、`username`、`password`、`phone`、`sex`、`id_number`、`status`、`create_time`、`update_time`、`create_user`、`update_user`。仓库没有 DDL，字段约束与索引需以实际数据库为准。
+当前实际访问的表为 `employee` 和 `category`。`employee` 的 SQL 涉及：`id`、`name`、`username`、`password`、`phone`、`sex`、`id_number`、`status`、`create_time`、`update_time`、`create_user`、`update_user`；`category` 涉及：`id`、`type`、`name`、`sort`、`status` 与同样四个审计列。仓库没有 DDL，字段约束与索引需以实际数据库为准（本机实测：两表的审计列都可为 NULL，`employee.username`、`category.name` 各有唯一索引）。
 
 ## 5. 预置领域模型（不等于业务已实现）
 
@@ -164,7 +173,7 @@ waimai/
 - 登录和新增员工日志只记录用户名，拦截器不打印 JWT，新增接口不打印身份证、手机号等完整 DTO。
 - 退出接口只返回成功，前端清理 Cookie；服务端没有 JWT 黑名单或会话失效逻辑。
 - 新增员工在 Service 校验五个必填字段及数据库列长度，用户名唯一索引冲突转为“用户名已存在”。全局处理器将业务异常返回 code=0，将空请求体、JSON/字段类型解析失败返回 HTTP 400 + code=0；其他数据库故障不伪装成用户名重复。
-- 审计字段在 EmployeeServiceImpl 手动填充。`AutoFillConstant`、`OperationType` 只是预置内容，目前没有自动填充注解或 AOP 切面。
+- 审计字段（创建/修改时间、创建/修改人）已由 `AutoFillAspect` 统一填充，业务层不再手动 set；标注了 `@AutoFill` 的 mapper 方法见第 15 节。
 - `SkyApplication` 启用注解事务管理，当前员工方法没有显式 `@Transactional`。
 - `JacksonObjectMapper` 定义日期 `yyyy-MM-dd`、日期时间 `yyyy-MM-dd HH:mm`、时间 `HH:mm:ss`，现已在 `WebMvcConfiguration.extendMessageConverters` 中注册并置于转换器首位。注册前 `LocalDateTime` 被序列化成 `[2026,9,22,14,59]` 数组，与接口文档要求的字符串不符；现在时间字段是 `"2026-09-22 14:59"` 形式的字符串。注意 `DEFAULT_DATE_TIME_FORMAT` 不含秒，需要秒级精度时要同时改这个常量。
 - `JwtUtil` 负责生成/解析令牌；`HttpClientUtil` 提供 GET、表单 POST、JSON POST；`AliOssUtil` 提供上传；`WeChatPayUtil` 提供支付及退款。除 JWT 外，当前业务没有调用这些工具。
@@ -223,7 +232,7 @@ sudo nginx -c /Users/cc/Desktop/waimai/frontend/nginx-mac.conf -s stop
 
 按需选择启动/重载/停止命令，不要整段连续执行。管理端访问 `http://localhost/`；Knife4j 入口为 `http://localhost:8080/doc.html`。若前端改用 8081 等端口，要同时检查上述硬编码 WebSocket 地址。
 
-后续代码修改可先在父工程目录执行 `mvn test` / `mvn package`。默认 `mvn test` 执行 65 项、0 失败，4 个真实 MySQL 联调类按默认配置跳过；用 mock 的类为 `EmployeeLoginTest` 25 项（认证、新增校验、密码哈希、审计字段）、`EmployeeUpdateTest` 11 项、`EmployeeStatusTest` 7 项、`EmployeePageQueryTest` 7 项、`GlobalExceptionHandlerTest` 7 项、`EmployeeGetByIdTest` 4 项。显式启用的联调类为 `EmployeeDatabaseTest`、`EmployeePageQueryDatabaseTest`、`EmployeeStatusDatabaseTest`、`EmployeeUpdateDatabaseTest`，测试数据在事务结束后回滚。`SKY_DB_TESTS=true` 下共 72 项全部通过。测试源码已纳入 Git（`.gitignore` 中针对测试的忽略规则已移除）。
+后续代码修改可先在父工程目录执行 `mvn test` / `mvn package`。默认 `mvn test` 执行 75 项、0 失败，5 个真实 MySQL 联调类按默认配置跳过；用 mock 的类为 `EmployeeLoginTest` 25 项（认证、新增校验、密码哈希）、`EmployeeUpdateTest` 11 项、`AutoFillAspectTest` 9 项（公共字段填充切面本身）、`EmployeeStatusTest` 7 项、`EmployeePageQueryTest` 7 项、`GlobalExceptionHandlerTest` 7 项、`EmployeeGetByIdTest` 4 项。显式启用的联调类为 `EmployeeDatabaseTest`、`EmployeePageQueryDatabaseTest`、`EmployeeStatusDatabaseTest`、`EmployeeUpdateDatabaseTest`、`CategoryDatabaseTest`，测试数据在事务结束后回滚。`SKY_DB_TESTS=true` 下共 85 项全部通过。测试源码已纳入 Git（`.gitignore` 中针对测试的忽略规则已移除）。
 
 ## 9. 后续快速恢复上下文
 
@@ -235,7 +244,7 @@ sudo nginx -c /Users/cc/Desktop/waimai/frontend/nginx-mac.conf -s stop
 6. 页面/API 问题先区分 `80` 端口的 `/api` 与 `8080` 端口的 `/admin`，再查看 Nginx 配置和 Source Map。
 7. 每次功能或结构变化后同步更新本文，尤其是已实现接口、运行步骤和未实现内容。
 
-当前 Git 分支为 `master`，最近一次提交为「员工管理页面所有功能完成」，内容包含员工全部接口代码、`PasswordConfiguration` 与 `SpringfoxConfiguration` 两个配置类、10 个测试类、根 `.gitignore` 与本文。工作区与该提交一致，没有未提交改动；更早的骨架提交为「苍穹外卖初始代码」。本文不记提交哈希 —— 文档与代码同属一次提交，回填哈希会立刻过期，需要时以 `git log` 为准。根 `.gitignore` 忽略 `.DS_Store` 与 nginx 的 `logs/`、`temp/`；`.idea/` 交给 `.idea/.gitignore` 处理，工程配置是有意保留在 Git 中的。
+当前 Git 分支为 `master`，最近一次提交为「员工管理页面所有功能完成」，内容包含员工全部接口代码、`PasswordConfiguration` 与 `SpringfoxConfiguration` 两个配置类、全部测试类、根 `.gitignore` 与本文。是否还有未提交改动一律以 `git status --short` 为准 —— 本文与代码同属一次提交，写字当下就有新的改动，在这里断言“工作区干净”只会立刻过期，提交哈希同理，需要时以 `git log` 为准。更早的骨架提交为「苍穹外卖初始代码」。根 `.gitignore` 忽略 `.DS_Store` 与 nginx 的 `logs/`、`temp/`；`.idea/` 交给 `.idea/.gitignore` 处理，工程配置是有意保留在 Git 中的。
 
 
 ## 10. 员工登录令牌增量（2026-09-22）
@@ -316,3 +325,20 @@ env JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home SKY
 - 测试：`EmployeeStatusTest` 7 项、`EmployeeUpdateTest` 11 项、`EmployeeGetByIdTest` 4 项用 mock 覆盖参数绑定、取值校验与鉴权；`EmployeeStatusDatabaseTest` 2 项、`EmployeeUpdateDatabaseTest` 5 项走真实 MySQL，验证只改预期列、口令哈希与 `status` 不受影响、原生样式的“回显→原样提交”往返不产生变化、撞名失败后两行都完好，测试数据事务回滚。默认 65 项通过、4 项联调跳过；`SKY_DB_TESTS=true` 下 72 项全部通过。
 - 仓库整理（同一次提交）：新增根 `.gitignore` 忽略 `.DS_Store` 与 `frontend/nginx-1.20.2/` 的 `logs/`、`temp/`；`logs/access.log`、`error.log`、`nginx.pid` 移出跟踪 —— 两个 nginx 配置都不使用这三个文件（`nginx-mac.conf` 指向 `/opt/homebrew/var/log/nginx/`，自带的 `conf/nginx.conf` 又把相关指令注释掉了），且 `nginx.pid` 里是别的机器留下的旧 PID。两个配置类 `PasswordConfiguration`、`SpringfoxConfiguration` 与全部测试类此前未纳入 Git，一并补上：缺前者会让新克隆启动即 `NoSuchBeanDefinitionException`。
 - 已知未处理项：**禁用当前登录的管理员会立刻锁死自己** —— 拦截器对每个受保护请求复查账号状态，禁用后再无法通过接口改回，只能直接改库。接口文档未要求拦截，故未加限制，需要时可加“不得禁用自己”的校验。
+
+
+## 15. 公共字段自动填充（AutoFill，2026-09-22）
+
+四个审计列不再由业务层逐个 `set`，统一由切面写入。
+
+- 切点：`execution(* com.sky.mapper.*.*(..)) && @annotation(com.sky.annotation.AutoFill)` —— 只有落在 `com.sky.mapper` 包下、又标了注解的方法才被拦截。`OperationType`（INSERT/UPDATE）由注解携带，切面读它决定填哪些字段。
+- 当前生效的方法：`EmployeeMapper.insert`(INSERT)、`EmployeeMapper.update`(UPDATE)、`CategoryMapper.insert`(INSERT)、`CategoryMapper.update`(UPDATE)。`DishMapper`、`SetmealMapper` 现在只有 count 查询，没有需要填充的方法；以后写菜品/套餐的增改，加注解即可复用。`AutoFillConstant` 里那四个 setter 名就是反射调用的目标。
+- **通知必须是 `@Before`**：MyBatis 在方法体内部才读取参数对象，前置通知改的是同一个实例，所以改完立刻生效。用 `@Around` 再手动 `proceed()` 也能实现，但没必要。
+- INSERT 填四个字段，且 `create_time` 与 `update_time` 取同一个 `now`；UPDATE 只刷 `update_time`、`update_user`，创建时间与创建人一旦落库不再变动。
+- 操作人取自 `BaseContext`（登录拦截器写入）。**缺少登录上下文时保留实体上的原值，不写成 null** —— 动态 `<set>` 会跳过 null 列，这恰好等于“没人改过 `update_user`”；写 null 反而会把上一个操作人抹掉。`CategoryDatabaseTest` 在真实 MySQL 上专门验证了这条。
+- 拿不到实体参数（方法无参或第一个参数为 null）时打 WARN 后跳过，不抛异常打断请求；而实体缺少 `setCreateTime` 这类 setter 时直接抛 `IllegalStateException` —— 注解加错对象属于编码错误，静默跳过只会让 `create_time` 在库里悄悄变成 null，事后无从追查。
+- 业务层原有的 `UserNotLoginException` 检查保留：它挡在 mapper 调用之前，把“未登录”变成明确的业务错误，而不是写出一条没有创建人的记录。真正落库的值由切面在 mapper 调用那一刻从同一个 ThreadLocal 取。
+- `CategoryMapper.insert` 的 `@Insert` SQL 直接引用四个公共字段、没有 `<if>` 兜底，必须依赖切面；`EmployeeMapper.insert` 与两个 `update` 的 XML 同样引用这些列。
+- 切面是否真的织入 mapper 代理，是 mock 测试证明不了的（mock 掉 mapper 就绕过了整个代理）：`AutoFillAspectTest` 9 项只覆盖切面逻辑本身，端到端由 `EmployeeDatabaseTest`（新增）、`EmployeeStatusDatabaseTest` 与 `EmployeeUpdateDatabaseTest`（修改）、`CategoryDatabaseTest` 4 项（分类新增、修改、启用禁用，以及无登录上下文时不清空修改人）保证 —— 这些用例断言的是库里的真实列值，而业务层已经不再写这些列。
+- 改动文件：实现 `aspect/AutoFillAspect`、给两个 Mapper 的四个方法加注解、新增 `AutoFillAspectTest` 与 `CategoryDatabaseTest`；`EmployeeServiceImpl` 与 `CategoryServiceImpl` 删除共 12 行手动填充（`LocalDateTime`、`BaseContext` 的 import 随之移除）；`EmployeeLoginTest`、`EmployeeUpdateTest`、`EmployeeStatusTest` 里“业务层填写审计字段”的断言改为断言业务层**不碰**这些字段。
+- 已知未处理项：分类的启用/禁用（`CategoryServiceImpl.startOrStop`）没有像员工那样校验 `status` 只能是 0/1，传其他值会直接写进 `status` 列；接口文档未要求，需要时可补校验。

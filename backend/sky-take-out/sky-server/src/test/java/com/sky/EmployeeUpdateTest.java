@@ -25,7 +25,6 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.nio.charset.StandardCharsets;
-import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -103,11 +102,10 @@ class EmployeeUpdateTest {
     }
 
     @Test
-    void writesSubmittedFieldsAndAuditInfoOnly() throws Exception {
+    void writesSubmittedFieldsAndLeavesAuditFieldsToTheAspect() throws Exception {
         when(mapper.getById(OPERATOR_ID)).thenReturn(operator());
         when(mapper.getById(TARGET_ID)).thenReturn(target());
         when(mapper.update(any(Employee.class))).thenReturn(1);
-        LocalDateTime before = LocalDateTime.now();
 
         MvcResult result = edit(body());
         assertEquals(200, result.getResponse().getStatus());
@@ -124,8 +122,10 @@ class EmployeeUpdateTest {
         assertEquals("13900000000", update.getPhone());
         assertEquals("0", update.getSex());
         assertEquals("110101199001010022", update.getIdNumber());
-        assertEquals(OPERATOR_ID, update.getUpdateUser(), "update_user 应为登录人");
-        assertFalse(update.getUpdateTime().isBefore(before), "update_time 应刷新为本次操作时间");
+        //公共字段不归业务层管：update_time、update_user 由 AutoFillAspect 在 mapper 调用前填好，
+        //这里保持 null 才说明职责真的挪走了（切面本身的验证见 AutoFillAspectTest）。
+        assertNull(update.getUpdateTime());
+        assertNull(update.getUpdateUser());
         //编辑接口不能改账号状态和口令：这两个属性必须保持 null，动态 <set> 才不会写到它们。
         assertNull(update.getStatus(), "编辑接口不得改动 status");
         assertNull(update.getPassword(), "编辑接口不得改动 password");

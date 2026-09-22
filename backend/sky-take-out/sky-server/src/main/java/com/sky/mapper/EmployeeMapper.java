@@ -1,8 +1,10 @@
 package com.sky.mapper;
 
 import com.github.pagehelper.Page;
+import com.sky.annotation.AutoFill;
 import com.sky.dto.EmployeePageQueryDTO;
 import com.sky.entity.Employee;
+import com.sky.enumeration.OperationType;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
@@ -36,10 +38,12 @@ public interface EmployeeMapper {
     /**
      * 新增员工，SQL 位于 resources/mapper/EmployeeMapper.xml 的 insert 映射。
      * 返回写入行数，数据库自增主键回填至 employee.id。
+     * 创建/修改时间与创建/修改人由 AutoFillAspect 依据 @AutoFill(INSERT) 自动填充，调用方不必设置。
      * @param employee
      */
 
     //插入员工的sql写在了XML映射文件里面
+    @AutoFill(OperationType.INSERT)
     int insert(Employee employee);
 
     /**
@@ -53,12 +57,14 @@ public interface EmployeeMapper {
 
     /**
      * 按主键更新员工，SQL 位于 resources/mapper/EmployeeMapper.xml 的 update 映射。
-     * 只更新实体中非 null 的字段，因此调用方可以只传 id + status + 审计字段，
+     * 只更新实体中非 null 的字段，因此调用方可以只传 id + 要改的列，
      * 不会把 password 等未赋值的属性写成 null。
+     * 修改时间与修改人由 AutoFillAspect 依据 @AutoFill(UPDATE) 自动填充，调用方不必设置。
      *
      * @param employee 必须包含 id
      * @return 受影响行数
      */
+    @AutoFill(OperationType.UPDATE)
     int update(Employee employee);
 
 }

@@ -24,7 +24,6 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.nio.charset.StandardCharsets;
-import java.time.LocalDateTime;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -109,10 +108,9 @@ class EmployeeStatusTest {
     }
 
     @Test
-    void disableThenEnableWritesStatusAndAuditFieldsOnly() throws Exception {
+    void disableThenEnableWritesStatusAndLeavesAuditFieldsToTheAspect() throws Exception {
         when(mapper.getById(OPERATOR_ID)).thenReturn(operator());
         when(mapper.getById(TARGET_ID)).thenReturn(target(1));
-        LocalDateTime before = LocalDateTime.now();
 
         MvcResult disabled = call(0, TARGET_ID);
         assertEquals(200, disabled.getResponse().getStatus());
@@ -123,9 +121,10 @@ class EmployeeStatusTest {
         Employee update = captor.getValue();
         assertEquals(TARGET_ID, update.getId());
         assertEquals(0, update.getStatus());
-        assertEquals(OPERATOR_ID, update.getUpdateUser(), "update_user 应为登录人而不是目标员工");
-        assertNotNull(update.getUpdateTime());
-        assertFalse(update.getUpdateTime().isBefore(before), "update_time 应刷新为本次操作时间");
+        //公共字段由 AutoFillAspect 在 mapper 调用前填充，业务层不再经手（见 AutoFillAspectTest）；
+        //切面取的是 BaseContext 里的登录人，因此不会把目标员工当成操作人。
+        assertNull(update.getUpdateUser());
+        assertNull(update.getUpdateTime());
         //动态 <set> 只写非 null 字段，未赋值的属性不能把库里的值覆盖成 null。
         assertNull(update.getUsername());
         assertNull(update.getName());

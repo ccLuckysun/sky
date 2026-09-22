@@ -26,7 +26,6 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.util.StringUtils;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 @Service
@@ -93,8 +92,9 @@ public class EmployeeServiceImpl implements EmployeeService {
         validateField(employeeDTO.getSex(), "性别", 2);
         validateField(employeeDTO.getIdNumber(), "身份证", 18);
 
-        Long currentEmployeeId = BaseContext.getCurrentId();
-        if (currentEmployeeId == null) {
+        //先拦掉未登录的请求。公共字段由 AutoFillAspect 从同一个 ThreadLocal 取操作人，
+        //没有登录上下文时它会保留 null，与其写出一条没有创建人的记录，不如在这里就报错。
+        if (BaseContext.getCurrentId() == null) {
             throw new UserNotLoginException(MessageConstant.USER_NOT_LOGIN);
         }
         Employee employee = new Employee();
@@ -109,14 +109,7 @@ public class EmployeeServiceImpl implements EmployeeService {
         //3、默认密码只保存带随机盐的 BCrypt 哈希。
         employee.setPassword(passwordEncoder.encode(PasswordConstant.DEFAULT_PASSWORD));
 
-        //4、设置当前记录的创建时间和修改时间
-        LocalDateTime now = LocalDateTime.now();
-        employee.setCreateTime(now);
-        employee.setUpdateTime(now);
-
-        //5、设置当前记录创建人id和修改人id
-        employee.setCreateUser(currentEmployeeId);
-        employee.setUpdateUser(currentEmployeeId);
+        //4、创建/修改时间与创建/修改人由 AutoFillAspect 依据 @AutoFill(INSERT) 填充，业务层不再逐个设置
 
         try {
             if (employeeMapper.insert(employee) != 1) {
@@ -184,16 +177,15 @@ public class EmployeeServiceImpl implements EmployeeService {
             throw new AccountNotFoundException(MessageConstant.ACCOUNT_NOT_FOUND);
         }
 
-        Long currentEmployeeId = BaseContext.getCurrentId();
-        if (currentEmployeeId == null) {
+        //先拦掉未登录的请求，避免写出一条没有修改人的记录（AutoFillAspect 在缺上下文时不会补操作人）。
+        if (BaseContext.getCurrentId() == null) {
             throw new UserNotLoginException(MessageConstant.USER_NOT_LOGIN);
         }
 
+        //只带要改的列，update_time、update_user 由 AutoFillAspect 依据 @AutoFill(UPDATE) 填充。
         Employee employee = Employee.builder()
                 .id(id)
                 .status(status)
-                .updateTime(LocalDateTime.now())
-                .updateUser(currentEmployeeId)
                 .build();
 
         //不校验影响行数：MySQL 在状态与原值相同时会返回 0，重复点击“启用”不应被当成失败。
@@ -220,17 +212,16 @@ public class EmployeeServiceImpl implements EmployeeService {
             throw new AccountNotFoundException(MessageConstant.ACCOUNT_NOT_FOUND);
         }
 
-        Long currentEmployeeId = BaseContext.getCurrentId();
-        if (currentEmployeeId == null) {
+        //先拦掉未登录的请求，避免写出一条没有修改人的记录（AutoFillAspect 在缺上下文时不会补操作人）。
+        if (BaseContext.getCurrentId() == null) {
             throw new UserNotLoginException(MessageConstant.USER_NOT_LOGIN);
         }
 
         Employee employee = new Employee();
         //只拷贝 DTO 暴露的字段，status、password 保持 null，动态 <set> 便不会写到这两列，
         //编辑接口因此无法改变账号启用状态或口令。
+        //update_time、update_user 同样保持 null，由 AutoFillAspect 依据 @AutoFill(UPDATE) 填充。
         BeanUtils.copyProperties(employeeDTO, employee);
-        employee.setUpdateTime(LocalDateTime.now());
-        employee.setUpdateUser(currentEmployeeId);
 
         try {
             //不校验影响行数：提交的内容与库中完全一致时 MySQL 返回 0，未做修改不应报错。
