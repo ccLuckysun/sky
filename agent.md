@@ -7,7 +7,7 @@
 
 - 项目是外卖管理系统的初始骨架，后端名称为“苍穹外卖”；前端页面标题/manifest 仍有“瑞吉外卖”，是同一份管理端资源。
 - 后端为 Java 17、Spring Boot 2.7.3、Maven 三模块工程，根 POM 在 `backend/sky-take-out/pom.xml`，不是仓库根目录。
-- **目前业务实现只有员工管理、分类管理和文件上传：员工为登录、退出、分页查询、新增、编辑、启用/禁用和按 id 回显；分类为新增、分页查询、删除、修改、启用/禁用和按类型查询；另有通用的文件上传（存本地磁盘，见第 16 节）。** 菜品、套餐、订单等虽然已有 DTO/Entity/VO 和前端页面，但没有对应后端 Controller/Service/Mapper。
+- **目前业务实现只有员工管理、分类管理、菜品新增和文件上传：员工为登录、退出、分页查询、新增、编辑、启用/禁用和按 id 回显；分类为新增、分页查询、删除、修改、启用/禁用和按类型查询；菜品只有新增（`POST /admin/dish`，会同时写 `dish` 与 `dish_flavor` 两张表，见第 17 节），列表/修改/删除/启停都还没有；另有通用的文件上传（存本地磁盘，见第 16 节）。** 套餐、订单等虽然已有 DTO/Entity/VO 和前端页面，但没有对应后端 Controller/Service/Mapper。
 - 前端是 Nginx 配套的已构建管理端，缺少独立 `src/`、`package.json` 和锁文件；不能直接在此执行 `npm install/build`。JS Source Map 内包含部分原始源码，可辅助定位契约。
 - 服务默认端口：Nginx `80`、后端 `8080`、MySQL `3306`。浏览器的 `/api/...` 经 Nginx 转为后端 `/admin/...`。
 - 仓库缺少建表/初始化 SQL、数据库迁移、CI 和容器部署配置；已有员工登录自动化测试。本机已确认存在 employee 表，但其他环境仍需自行准备数据库。
@@ -37,7 +37,7 @@ waimai/
 │   │       ├── dto/                # 21 个输入/查询模型
 │   │       ├── entity/             # 11 个实体
 │   │       └── vo/                 # 17 个响应/统计模型
-│   └── sky-server/                 # 可运行服务，20 个主源码 Java 文件
+│   └── sky-server/                 # 可运行服务，23 个主源码 Java 文件
 │       ├── src/main/java/com/sky/
 │       │   ├── SkyApplication.java
 │       │   ├── annotation/AutoFill.java # 标记需要自动填充公共字段的 mapper 方法
@@ -49,16 +49,17 @@ waimai/
 │       │   ├── controller/admin/EmployeeController.java
 │       │   ├── controller/admin/CategoryController.java
 │       │   ├── controller/admin/CommonController.java # 文件上传
+│       │   ├── controller/admin/DishController.java # 菜品新增
 │       │   ├── handler/GlobalExceptionHandler.java
 │       │   ├── interceptor/JwtTokenAdminInterceptor.java
-│       │   ├── mapper/             # EmployeeMapper、CategoryMapper、DishMapper、SetmealMapper
-│       │   └── service/            # EmployeeService、CategoryService 及 impl
-│       ├── src/test/java/com/sky/  # 14 个测试类，其中 5 个真实 MySQL 联调需显式启用
+│       │   ├── mapper/             # EmployeeMapper、CategoryMapper、DishMapper、DishFlavorMapper、SetmealMapper
+│       │   └── service/            # EmployeeService、CategoryService、DishService 及 impl
+│       ├── src/test/java/com/sky/  # 16 个测试类，其中 6 个真实 MySQL 联调需显式启用
 │       ├── uploads/                # 上传文件落盘目录（运行时数据，不入 Git，启动自动创建）
 │       └── src/main/resources/
 │           ├── application.yml
 │           ├── application-dev.yml
-│           └── mapper/             # EmployeeMapper.xml、CategoryMapper.xml
+│           └── mapper/             # EmployeeMapper.xml、CategoryMapper.xml、DishMapper.xml、DishFlavorMapper.xml
 └── frontend/
     ├── nginx-mac.conf              # 当前机器的 macOS/Homebrew 部署配置
     └── nginx-1.20.2/
@@ -87,7 +88,7 @@ waimai/
 | 分页 / 文档 | PageHelper 1.3.0、Knife4j 3.0.2（Swagger 2），分页已用于员工分页查询 |
 | 模型/序列化 | Lombok 1.18.20、Jackson；sky-pojo 单独指定 jackson-databind 2.9.2 |
 | 认证 | jjwt 0.9.1，HS256，管理员请求头 `token` |
-| 文件存储 | 本地磁盘：`sky.upload.dir`（默认 `uploads`，相对 sky-server 模块目录解析）→ `sky-server/uploads/`，访问入口是 `/uploads/**` 静态资源映射。阿里 OSS 依赖仍在类路径上但未接入，见第 16 节 |
+| 文件存储 | 本地磁盘：`sky.upload.dir`（默认 `uploads`，相对 sky-server 模块目录解析）→ `sky-server/uploads/`，访问入口是 `/uploads/**` 静态资源映射。阿里 OSS 依赖仍在类路径上但未接入，见第 16 节；`LocalFileUtil` 另有带目录围栏的 `isLocalPath`/`exists`/`delete`，供新增菜品失败时补偿删图，见第 18 节 |
 | 预置依赖 | Redis、Spring Cache、WebSocket、POI、OSS、微信支付；依赖存在不代表业务已接入。AspectJ（`aspectjweaver` + `aspectjrt`；Spring Boot 的 AOP 自动配置只要类路径上有 `org.aspectj.weaver.Advice` 就会开启，本项目**没有引入 `spring-boot-starter-aop`**）已用于公共字段自动填充，见第 15 节 |
 | 监控 | sky-server 已加入 Actuator 依赖；未自定义监控配置；SpringfoxConfiguration 过滤文档扫描中的 PathPattern 路由，保留实际监控端点 |
 | 前端 | Source Map 显示 Vue、TypeScript、Vue Router、Vuex、Element UI、Axios，另有图表等依赖 |
@@ -119,6 +120,7 @@ waimai/
 | PUT | `/admin/category` | JSON：`id`、`type`、`name`、`sort`；改写这三列与修改审计列，不动 `status` | `token` |
 | POST | `/admin/category/status/{status}` | 路径 `status`，Query `id`；启用/禁用分类 | `token` |
 | GET | `/admin/category/list` | Query：`type` 可选；只返回 `status=1` 的分类 | `token` |
+| POST | `/admin/dish` | JSON：`name`、`categoryId`、`price`、`image` 必填，`description`、`status`、`flavors[]` 可选；在**一个事务里**同时写 `dish` 与 `dish_flavor`，失败时还会把这次请求引用的本地图片一并删掉；`image` 是 `/uploads/...` 时要求文件真的在磁盘上。成功返回空 `data`，详见第 18 节 | `token` |
 | POST | `/admin/common/upload` | `multipart/form-data`，字段名固定为 `file`；只接受 jpg/jpeg/png，落盘到 `sky-server/uploads/yyyy/MM/dd/<uuid>.<ext>`，返回该文件的相对访问路径 | `token` |
 
 响应统一为 `Result<T>`：`{"code":1,"msg":null,"data":...}`；业务失败由 `GlobalExceptionHandler` 捕获 `BaseException` 并返回 `code=0` 和消息，未设置特殊 HTTP 状态。分页模型是 `{total, records}`，员工分页查询已使用。
@@ -162,7 +164,11 @@ waimai/
 
 编辑、启用/禁用与按 id 回显都复用 `EmployeeMapper.xml` 里的动态 `update`（`<set>` 只写非 null 字段）：编辑只填五列，状态接口只填 `status`，两者因此都无法越权改到对方负责的列 —— 编辑改不了 `status` 与口令，状态接口也改不了姓名手机号。回显走 `EmployeeMapper.getDetailById`，列清单与 `pageQuery` 相同（不含 `password`）；没有复用拦截器的 `getById`，因为后者在每个受保护请求上都会执行，只需要 `id`、`status`。详见第 14 节。
 
-当前实际访问的表为 `employee` 和 `category`。`employee` 的 SQL 涉及：`id`、`name`、`username`、`password`、`phone`、`sex`、`id_number`、`status`、`create_time`、`update_time`、`create_user`、`update_user`；`category` 涉及：`id`、`type`、`name`、`sort`、`status` 与同样四个审计列。仓库没有 DDL，字段约束与索引需以实际数据库为准（本机实测：两表的审计列都可为 NULL，`employee.username`、`category.name` 各有唯一索引）。
+新增菜品是全项目**第一处 `@Transactional`**：`DishServiceImpl.saveWithFlavor` 把校验、分类存在性检查和两次写库（`dish` 一条 + `dish_flavor` 批量）收在一个事务里，同成同败 —— 否则会留下没有口味的菜品，或挂着不存在菜品的孤儿口味。校验在写任何一张表之前全部做完，因此校验失败时不会留下半截数据。事务由 `SkyApplication` 上的 `@EnableTransactionManagement` 提供（第 6 节）。
+
+**图片文件不在这套事务里，只能靠补偿**：本地磁盘没有两阶段提交，`@Transactional` 管不到 `Files.write`。做法是在事务回滚后删掉这次请求引用的本地上传图（第 18 节），它引出一个新约束：`image` 是 `/uploads/...` 时必须真存在于磁盘，否则拒绝 —— 否则"失败删图"会让客户端手里的路径失效，重提交就会写出一条挂着不存在图片的菜品。
+
+当前实际访问的表为 `employee`、`category`、`dish` 和 `dish_flavor`。`employee` 的 SQL 涉及：`id`、`name`、`username`、`password`、`phone`、`sex`、`id_number`、`status`、`create_time`、`update_time`、`create_user`、`update_user`；`category` 涉及：`id`、`type`、`name`、`sort`、`status` 与同样四个审计列；`dish` 涉及：`id`、`name`、`category_id`、`price`、`image`、`description`、`status` 与四个审计列；`dish_flavor` 涉及：`id`、`dish_id`、`name`、`value`（**没有审计列**，所以它的 mapper 方法不能标 `@AutoFill`）。仓库没有 DDL，字段约束与索引需以实际数据库为准（本机实测：`employee`、`category` 的审计列都可为 NULL，`employee.username`、`category.name`、`dish.name` 各有唯一索引，`dish.name` 那条是**全库唯一**、不按分类区分；`dish.status` 虽有 `DEFAULT 1`，但 XML 是显式列清单，这个默认值不会生效）。
 
 ## 5. 预置领域模型（不等于业务已实现）
 
@@ -193,7 +199,7 @@ waimai/
 - 退出接口只返回成功，前端清理 Cookie；服务端没有 JWT 黑名单或会话失效逻辑。
 - 新增员工在 Service 校验五个必填字段及数据库列长度，用户名唯一索引冲突转为“用户名已存在”。全局处理器将业务异常返回 code=0，将空请求体、JSON/字段类型解析失败返回 HTTP 400 + code=0；其他数据库故障不伪装成用户名重复。
 - 审计字段（创建/修改时间、创建/修改人）已由 `AutoFillAspect` 统一填充，业务层不再手动 set；标注了 `@AutoFill` 的 mapper 方法见第 15 节。
-- `SkyApplication` 启用注解事务管理，当前员工方法没有显式 `@Transactional`。
+- `SkyApplication` 启用注解事务管理。员工与分类的方法都没有显式 `@Transactional`（每个业务只写一张表）；菜品新增是唯一一处显式 `@Transactional`，因为它要同时写 `dish` 与 `dish_flavor`（第 17 节）。
 - `JacksonObjectMapper` 定义日期 `yyyy-MM-dd`、日期时间 `yyyy-MM-dd HH:mm`、时间 `HH:mm:ss`，现已在 `WebMvcConfiguration.extendMessageConverters` 中注册并置于转换器首位。注册前 `LocalDateTime` 被序列化成 `[2026,9,22,14,59]` 数组，与接口文档要求的字符串不符；现在时间字段是 `"2026-09-22 14:59"` 形式的字符串。注意 `DEFAULT_DATE_TIME_FORMAT` 不含秒，需要秒级精度时要同时改这个常量。
 - `JwtUtil` 负责生成/解析令牌；`HttpClientUtil` 提供 GET、表单 POST、JSON POST；`AliOssUtil` 提供 OSS 上传（未接入）；`LocalFileUtil` 提供本地磁盘上传（已接入，见第 16 节）；`WeChatPayUtil` 提供支付及退款。除 JWT 与 `LocalFileUtil` 外，当前业务没有调用这些工具。
 - `WeChatPayUtil` 是组件，调用支付时才读取证书等配置；`AliOssUtil` 没有自动注册 Bean 的配置。接入前需完成配置与调用链。
@@ -221,7 +227,8 @@ waimai/
 前端已有但后端尚缺的典型接口：
 
 - 员工：`PUT /employee/editPassword`（改密）。登录、退出、`GET /employee/page`、`POST /employee`、`PUT /employee`、`GET /employee/{id}`、`POST /employee/status/{status}` 均已实现。
-- 分类、菜品、套餐：`/category/*`、`/dish/*`、`/setmeal/*`。
+- 菜品：`GET /dish/page`（列表页，新增成功后 `$router.push('/dish')` 就会打它）、`POST /dish/status/{status}`、`DELETE /dish`、`PUT /dish`、`GET /dish/{id}`、`GET /dish/list`。`POST /dish`（新增）已实现，见第 17 节 —— 但列表页还没实现，所以新增成功跳回列表页仍然报 404。
+- 套餐：`/setmeal/*`。
 - 订单与统计：`/order/*`、`/workspace/*`、`/report/*`。
 - 营业状态：`/shop/status`、`/shop/{status}`。（`/common/upload` 已实现，见第 16 节）
 
@@ -254,7 +261,7 @@ sudo nginx -c /Users/cc/Desktop/waimai/frontend/nginx-mac.conf -s stop
 
 按需选择启动/重载/停止命令，不要整段连续执行。管理端访问 `http://localhost/`；Knife4j 入口为 `http://localhost:8080/doc.html`。若前端改用 8081 等端口，要同时检查上述硬编码 WebSocket 地址。
 
-后续代码修改可先在父工程目录执行 `mvn test` / `mvn package`。默认 `mvn test` 执行 87 项、0 失败、5 项跳过（5 个真实 MySQL 联调类按默认配置跳过）；用 mock 的类为 `EmployeeLoginTest` 25 项（认证、新增校验、密码哈希）、`EmployeeUpdateTest` 11 项、`AutoFillAspectTest` 9 项（公共字段填充切面本身）、`EmployeeStatusTest` 7 项、`EmployeePageQueryTest` 7 项、`GlobalExceptionHandlerTest` 7 项、`CommonUploadTest` 6 项（上传接口）、`LocalFileUtilTest` 6 项（上传目录解析与路径拼接）、`EmployeeGetByIdTest` 4 项。显式启用的联调类为 `EmployeeDatabaseTest`、`EmployeePageQueryDatabaseTest`、`EmployeeStatusDatabaseTest`、`EmployeeUpdateDatabaseTest`、`CategoryDatabaseTest`，测试数据在事务结束后回滚。`SKY_DB_TESTS=true` 下共 97 项全部通过。测试源码已纳入 Git（`.gitignore` 中针对测试的忽略规则已移除）。
+后续代码修改可先在父工程目录执行 `mvn test` / `mvn package`。默认 `mvn test` 执行 113 项、0 失败、7 项跳过（7 个真实 MySQL 联调类按默认配置跳过）；用 mock 的类为 `EmployeeLoginTest` 25 项（认证、新增校验、密码哈希）、`DishSaveTest` 21 项（新增菜品，含前端真实形状的请求体、失败后删图的补偿）、`EmployeeUpdateTest` 11 项、`AutoFillAspectTest` 9 项（公共字段填充切面本身）、`LocalFileUtilTest` 9 项（上传目录解析、路径拼接到存在性判断与删除）、`EmployeeStatusTest` 7 项、`EmployeePageQueryTest` 7 项、`GlobalExceptionHandlerTest` 7 项、`CommonUploadTest` 6 项（上传接口）、`EmployeeGetByIdTest` 4 项。显式启用的联调类为 `EmployeeDatabaseTest`、`EmployeePageQueryDatabaseTest`、`EmployeeStatusDatabaseTest`、`EmployeeUpdateDatabaseTest`、`CategoryDatabaseTest`、`DishDatabaseTest`（5 项）、`DishImageRollbackDatabaseTest`（4 项，**故意不加 `@Transactional`**，因为被验证的正是事务完成回调，见第 18 节）。前六个联调类的测试数据在事务结束后回滚，最后一个自己清库清盘。`SKY_DB_TESTS=true` 下共 130 项全部通过。测试源码未被 `.gitignore` 排除（针对测试的忽略规则已移除），但**"没被忽略"不等于"已提交"**：有若干测试类至今仍是未跟踪状态，见第 9 节末尾的提醒。
 
 只跑 sky-server 时用 `mvn -pl sky-server -am test`，**不要省掉 `-am`**：省掉后 sky-common 取自本地仓库里的旧构件，改过 sky-common（如新增 `FileUploadException`）就会出现一堆 `NoClassDefFoundError`，看起来像代码坏了，其实只是没重新构建依赖模块。
 
@@ -262,14 +269,18 @@ sudo nginx -c /Users/cc/Desktop/waimai/frontend/nginx-mac.conf -s stop
 
 1. 先读本文，再运行 `git status --short`，以当前源码校正文档快照。
 2. 查功能是否存在：看 `sky-server/src/main/java/com/sky/controller/`，不要以 POJO 或前端页面是否存在判断完成度。
-3. 员工需求沿 `EmployeeController → EmployeeServiceImpl → EmployeeMapper → EmployeeMapper.xml` 阅读，再核对 sky-pojo 的输入/输出模型。
+3. 员工需求沿 `EmployeeController → EmployeeServiceImpl → EmployeeMapper → EmployeeMapper.xml` 阅读，再核对 sky-pojo 的输入/输出模型。菜品同理：`DishController → DishServiceImpl → DishMapper / DishFlavorMapper → 同名 XML`。
 4. 认证问题查看 `WebMvcConfiguration`、`JwtTokenAdminInterceptor`、`JwtUtil`、`BaseContext` 与 `sky.jwt`。
 5. 数据库问题查看两份 application YAML、Mapper SQL；不要编辑 `target/classes` 下的配置副本。
 6. 页面/API 问题先区分 `80` 端口的 `/api` 与 `8080` 端口的 `/admin`，再查看 Nginx 配置和 Source Map。
 7. 图片不显示按顺序查：库里 `image` 列是不是 `/uploads/...`（以 `/` 开头的相对路径）→ 启动日志里"文件上传目录"那一行的绝对路径下有没有这个文件 → 分别请求 `http://localhost:8080/uploads/...`（应为 200 + `image/png`）和 `http://localhost/uploads/...`。**注意前者的状态码骗不了人、后者会骗人**：nginx 没 reload 时 `/uploads/` 会落到 `location /` 的 `try_files` 回退，返回 **200 但 Content-Type 是 `text/html`（内容是 index.html）**，只看状态码会以为是好的。用 `curl -sI` 比 `%{http_code}`，或直接看 `content_type`。
 8. 每次功能或结构变化后同步更新本文，尤其是已实现接口、运行步骤和未实现内容。
 
-当前 Git 分支为 `master`，最近一次提交为「员工管理页面所有功能完成」，内容包含员工全部接口代码、`PasswordConfiguration` 与 `SpringfoxConfiguration` 两个配置类、全部测试类、根 `.gitignore` 与本文。是否还有未提交改动一律以 `git status --short` 为准 —— 本文与代码同属一次提交，写字当下就有新的改动，在这里断言“工作区干净”只会立刻过期，提交哈希同理，需要时以 `git log` 为准。更早的骨架提交为「苍穹外卖初始代码」。根 `.gitignore` 忽略 `.DS_Store` 与 nginx 的 `logs/`、`temp/`；`.idea/` 交给 `.idea/.gitignore` 处理，工程配置是有意保留在 Git 中的。
+当前 Git 分支为 `master`。已有提交按时间依次为「苍穹外卖初始代码」→「员工管理页面所有功能完成」→「分类功能导入」→「公共字段自动代码填充」→「图片上传」，一次增量一个提交；具体哈希以 `git log` 为准，本文不复制。是否还有未提交改动一律以 `git status --short` 为准 —— 本文与代码同属一次提交，写字当下就有新的改动，在这里断言"工作区干净"只会立刻过期。
+
+**「图片上传」那次提交漏了文件**：`FileUploadException`、`UploadProperties`、`LocalFileUtil`、`UploadConfiguration` 和 `CommonUploadTest`、`LocalFileUtilTest`、`AutoFillAspectTest`、`CategoryDatabaseTest` 至今仍是未跟踪状态（`git status` 里的 `??`）。后果不是"少几个文件"而是：从已提交内容全新克隆出来**编译不过** —— `CommonController` 引用了没入库的 `FileUploadException` 与 `LocalFileUtil`。下次提交前先 `git add -A` 把这几个补上。第 17、18 节的菜品新增与图片回滚改动同样尚未提交（后者还新增了未跟踪的 `DishImageRollbackDatabaseTest`）。
+
+根 `.gitignore` 忽略 `.DS_Store` 与 nginx 的 `logs/`、`temp/`；`.idea/` 交给 `.idea/.gitignore` 处理，工程配置是有意保留在 Git 中的。
 
 
 ## 10. 员工登录令牌增量（2026-09-22）
@@ -357,7 +368,8 @@ env JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home SKY
 四个审计列不再由业务层逐个 `set`，统一由切面写入。
 
 - 切点：`execution(* com.sky.mapper.*.*(..)) && @annotation(com.sky.annotation.AutoFill)` —— 只有落在 `com.sky.mapper` 包下、又标了注解的方法才被拦截。`OperationType`（INSERT/UPDATE）由注解携带，切面读它决定填哪些字段。
-- 当前生效的方法：`EmployeeMapper.insert`(INSERT)、`EmployeeMapper.update`(UPDATE)、`CategoryMapper.insert`(INSERT)、`CategoryMapper.update`(UPDATE)。`DishMapper`、`SetmealMapper` 现在只有 count 查询，没有需要填充的方法；以后写菜品/套餐的增改，加注解即可复用。`AutoFillConstant` 里那四个 setter 名就是反射调用的目标。
+- 当前生效的方法：`EmployeeMapper.insert`(INSERT)、`EmployeeMapper.update`(UPDATE)、`CategoryMapper.insert`(INSERT)、`CategoryMapper.update`(UPDATE)、`DishMapper.insert`(INSERT)。`SetmealMapper` 现在只有 count 查询，没有需要填充的方法；以后写套餐的增改，加注解即可复用。`AutoFillConstant` 里那四个 setter 名就是反射调用的目标。
+- **注解只能标在"第一个参数是带审计列的实体"的方法上**。`DishFlavorMapper.insertBatch` 收的是 `List<DishFlavor>`，标上去会让切面反射 `ArrayList` 找 `setCreateTime` 而抛 `IllegalStateException`（见下一条的"注解加错对象"），而且 `dish_flavor` 表压根没有审计列 —— 所以它**不加**注解，这是有意为之，不是漏了。
 - **通知必须是 `@Before`**：MyBatis 在方法体内部才读取参数对象，前置通知改的是同一个实例，所以改完立刻生效。用 `@Around` 再手动 `proceed()` 也能实现，但没必要。
 - INSERT 填四个字段，且 `create_time` 与 `update_time` 取同一个 `now`；UPDATE 只刷 `update_time`、`update_user`，创建时间与创建人一旦落库不再变动。
 - 操作人取自 `BaseContext`（登录拦截器写入）。**缺少登录上下文时保留实体上的原值，不写成 null** —— 动态 `<set>` 会跳过 null 列，这恰好等于“没人改过 `update_user`”；写 null 反而会把上一个操作人抹掉。`CategoryDatabaseTest` 在真实 MySQL 上专门验证了这条。
@@ -414,6 +426,63 @@ env JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home SKY
 - 已知未处理项：
   - `/uploads/**` **匿名可读**，猜到 UUID 就能取到图片。这是有意取舍（`<img src>` 带不上 token），UUID 不可枚举，但不要把它当成访问控制。
   - 库里 `dish.image` 仍有本次改造之前留下的 24 条阿里云 OSS 绝对 URL，本次**没有迁移**（外链还能正常显示）。写清理逻辑时注意不要用"删除所有非 `/uploads` 前缀的文件"这类判断，那会漏掉它们；断网或 OSS 侧清理后这些图会失效。
-  - 上传文件只增不减：没有清理、配额、审计日志，也不在任何备份范围内（它不在 Git 里）。
+  - 上传文件**没有清理、配额、审计日志**，也不在任何备份范围内（它不在 Git 里）。第 18 节补上了唯一一处自动删除：新增菜品失败回滚时删掉这张没被用上的图；除此之外的孤儿文件（上传完就放弃表单、进程被杀）依旧只增不减。
   - 只按扩展名过滤，伪装成 `.png` 的非图片会被接受并原样存盘。
   - 单独把 jar 拷到别处运行（不在 Maven 模块目录下）时锚点校验不过，目录会落在启动时的工作目录并按 `user.dir` 解析，想固定就显式配绝对路径。
+
+
+## 17. 新增菜品（POST /admin/dish，2026-09-23）
+
+菜品管理页「新增菜品」表单提交的接口，也是本项目**第一处 `@Transactional`**：它要同时写 `dish` 与 `dish_flavor` 两张表。
+
+- 请求：`Content-Type: application/json`，Body 为 `DishDTO`（`name`、`categoryId`、`price`、`image` 必填，`description`、`status`、`flavors[]` 可选）；沿用管理员 `token` 请求头。成功返回 `{"code":1,"msg":null,"data":null}` —— 接口文档把 `data` 标为非必须、前端只判 `code`，所以不回传新菜品 id。
+- 前端契约里的四个坑（逐条从 `js/shopTable.*.js.map` 里 `src/views/dish/addDishtype.vue` 的原始源码核对过，测试就按这个形状发请求）：
+  - `price` 发的是**字符串**（`"6.00"`）而不是数字；Jackson 能直接反序列化成 `BigDecimal`，服务端别按 `double` 处理金额。
+  - 新增时 `status` 被前端**硬编码为 0（停售）**：`params.status = this.actionType === 'add' ? 0 : (...)`，页面上没有这个输入项。
+  - `flavors[].value` 是 `JSON.stringify(obj.value)` 出来的**字符串**（`'["无糖","多糖"]'`）：接口定义就是字符串，服务端不解析、不校验 JSON 合法性，原样存进 `varchar(255)`。
+  - 请求体里多带一个 `DishDTO` 里没有的 `code`（商品码）字段（表单没有对应 `prop`，值恒为空串）。它能被接受是因为 `JacksonObjectMapper` 关掉了 `FAIL_ON_UNKNOWN_PROPERTIES`；**mock 测试必须显式把这个转换器装进 `MockMvc`**（`standaloneSetup` 不会执行 `WebMvcConfiguration.extendMessageConverters`，默认 `ObjectMapper` 会直接 400）。
+- 校验在写任何一张表之前一次做完（含每一个口味）：名称必填 ≤32、`categoryId` 必填且 >0、价格 >0 且小数位 ≤2 且 ≤99999999.99、图片必填 ≤255、描述可选 ≤255、`status` 只能是 0/1、口味名称必填 ≤32、口味值必填 ≤255。
+  - 顺序是有意的：校验 → 查分类存在 → 查登录上下文 → 才 insert。任何一条不合法时，库里都不会多出半条菜品。
+  - 价格的"小数位 ≤2"用 `stripTrailingZeros()` 判，所以 `12.500` 这种等值写法放行（`decimal(10,2)` 存进去就是 `12.50`），只有真正超过两位小数的才拒。
+  - 价格上限取的是列上限（`decimal(10,2)` = 8 位整数），而前端表单自己限到 6 位整数（`/^([1-9]\d{0,5}|0)(\.\d{1,2})?$/`）。**有意不跟前端对齐**：接口文档没约定上限，拒掉数据库装得下的值是凭空的限制。
+  - 界面确实能造出"口味名为空"的请求：`addFlavore()` 推入的是 `{name:'', value:[]}`，而表单 `rules` 只覆盖 `name/categoryId/image/price/code`，根本没校验 flavors。这里选择**拒绝**（「口味名称不能为空」）而不是静默丢掉这一行 —— 存进去只会在用户端多出一个没有名字的口味组。
+- `categoryId` 会真去 `category` 表查一次（`CategoryMapper.countById`）：两表没有外键，不查就会写出一条在任何分类列表里都查不到的菜品。查不到返回「分类不存在」。
+- 写库顺序与主键回填：`DishMapper.insert`（XML，`useGeneratedKeys` 回填 `Dish.id`）→ 用回填的 id 覆盖每个口味的 `dishId`、并把客户端传来的口味 `id` 一律置 null → `DishFlavorMapper.insertBatch` 用 `<foreach>` 一条 SQL 批量插入。拿不到回填主键时直接报错，不让数据库去抛 `dish_id` 非空约束。
+- `DishFlavorMapper.insertBatch` 单参数必须写 `@Param("flavors")`，XML 里也写 `collection="flavors"`：不加注解时 MyBatis 只暴露 `collection`/`list` 两个键，`<foreach collection="flavors">` 会在**第一个真正带口味的请求**上抛 `BindingException`，而这条路径在校验先行的设计里直到联调才会走到。
+- 唯一索引与重名：`dish.name` 上是**全库唯一索引** `idx_dish_name`（不按分类区分），撞了返回「菜品名称已存在」。这里必须显式 `catch (DuplicateKeyException)`：`GlobalExceptionHandler` 里那个 `SQLIntegrityConstraintViolationException` 分支会把索引冲突渲染成 ``'麻婆豆腐'已存在``，直接带着索引里的双引号。并发新增由同一个唯一索引兜住。
+- `status` 缺省时显式写 0，而不是留 null 让列默认值兜底：`dish.status` 的 `DEFAULT 1` **只在 INSERT 完全不写这一列时生效**，而这里的 XML 是显式列清单，写 null 就是真 null。null 的后果是不一致：列表页按 `status` 是否为 0 二分显示启售/停售，会把 null 显示成启售，而按 `status = 1` 过滤的查询又查不到它。
+- 改动文件：`MessageConstant`（补 `DISH_NAME_ALREADY_EXISTS`、`CATEGORY_NOT_FOUND`、`DISH_STATUS_ERROR`）、`CategoryMapper`（`countById`）、`DishMapper`（`insert` + `@AutoFill(INSERT)`）；新增 `mapper/DishFlavorMapper`、`mapper/DishMapper.xml`、`mapper/DishFlavorMapper.xml`、`service/DishService`、`service/impl/DishServiceImpl`；**填充已有的** `controller/admin/DishController` 空壳（提交到索引里的版本是 `public class DishController {}`，一个注解都没有 —— 忘记补 `@RestController`/`@RequestMapping` 会让整个接口 404，而这从文件内容上完全看不出来）。
+- 测试：`DishSaveTest` 15 项（mock，默认 `mvn test` 就跑：成功路径、主键不回填时的行为、无口味不调 `insertBatch`、逐项校验失败且断言**没有落任何库**、`status` 透传与缺省、重名、无 token 401）；`DishDatabaseTest` 5 项（真实 MySQL：四个审计列确实由切面填、回填主键落到 `dish_flavor.dish_id`、`value` 与传入的 JSON 字符串一致）。测试总数由 87 项变为 103 项、6 项跳过；`SKY_DB_TESTS=true` 下 117 项全部通过。
+- 联调实测（**后端与经 nginx 两段都验证过**）：`POST /admin/dish` 返回 `{"code":1,...}`，库中 `dish` 一行（`price` 12.50、`status` 0、`create_user`/`update_user` = 当前管理员、`create_time` = `update_time`）+ `dish_flavor` 两行且 `dish_id` 正确；六条负例（重名、分类不存在、价格为 0、缺图片、口味名为空、`status=2`）全部返回 `code=0` + 对应中文提示，无 token 返回 401，且**没有任何一条留下半截数据**；`http://localhost/api/dish` 同样返回 `code=1`（`/api` 这条代理本来就通，与第 16 节那个待 reload 的 `/uploads/` 是两回事）。联调插入的行已删除，基线恢复 24 菜品 / 24 口味。
+- 已知未处理项：
+  - **只有新增**。`GET /dish/page`（列表页）以及 `POST /dish/status/{status}`、`DELETE /dish`、`PUT /dish`、`GET /dish/{id}`、`GET /dish/list` 都还没有，所以新增成功跳回列表页仍然报 404 —— 数据确实进库了，但页面看起来是坏的。验证数据只能查库或走接口。
+  - 分类的 `type` 没校验：`categoryId` 指向一个套餐分类（`type=2`）也会写成功。接口文档没要求，前端下拉框只给 `type=1`，所以只能由直接调接口造出来；它会在列表页显示成挂着套餐分类名的菜品。
+  - 同一菜品里的**重名口味不拒**（`dish_flavor` 没有唯一索引），口味的 `value` 也不校验是不是合法 JSON。
+  - 4 字节字符（emoji）会以 `Incorrect string value` 500 收场：`dish.name` 等列是 `utf8mb3`，长度校验通过也存不下去。项目全局现状（`employee` 表同样如此），不在这里单独处理。
+  - 库里 24 条 `dish_flavor` 有 **11 条是孤儿**：`dish_id` 指向 2~10 这些不存在的菜品（现存菜品 id 从 46 起），另有 14 条菜品没有任何口味。这是本次改造**之前**就存在的数据（本次没有任何删除菜品的代码路径），按 `dish_id` 查口味的正常逻辑看不到它们，但写"统计口味数量"这类脚本时要留意。
+
+
+## 18. 新增菜品的事务一致性：图片文件的补偿回滚（2026-09-23）
+
+需求是「菜品新增接口的两张表写入与图片上传要同步，失败一起回滚，保证一致性」。两张表在第 17 节已经是一个事务；这一节补的是**图片文件**。
+
+先说清一件不能含糊的事：**MySQL 的事务包不住磁盘写文件**。本地文件系统没有两阶段提交，`@Transactional` 管不到 `Files.write`，事务管理器也没有"回滚时顺手撤一个文件操作"的能力。所以文件这一侧只有两条路：**补偿**（回滚后删掉）或**对账**（事后扫孤儿）。本次做的是补偿，因为对账需要定时任务，而本仓库连 `@EnableScheduling` 都没有。
+
+还有一条接口事实决定了只能这么做：前端是**已经构建好的 bundle**（仓库里没有 `src/`、没有 `package.json`，不能重新构建），它先 `POST /admin/common/upload` 拿到路径、再 `POST /admin/dish` 提交表单，**是两个独立请求**。后端无法把两步合成一个可回滚的单元，也不该为此改接口契约。上传自己失败时一行表都没碰，不需要补偿；要补的只有"图已经在磁盘上、菜品却没进库"这一段。
+
+- **回滚删图**：`DishServiceImpl.saveWithFlavor` 在动任何表之前注册 `TransactionSynchronizationManager.registerSynchronization(...)`，只在 `afterCompletion(STATUS_ROLLED_BACK)` 时删。为什么要等回调而不是在 `catch` 里删：**只有事务确实回滚了才删，提交成功时绝不能删**（否则每新增一道菜就把自己的图删掉）。注册点放在校验之前，所以校验失败、分类不存在、重名、口味写入失败、数据库断开——所有失败路径都被覆盖。`TransactionSynchronization` 在 Spring 5.3 里不是废弃类型（废弃的是 `TransactionSynchronizationAdapter`），只覆写需要的那个默认方法即可。
+- **没有活动事务时的退化**：`isSynchronizationActive()` 为 false 时（单测直接 `new` 出 service，或将来有人删掉 `@Transactional`）等不到回调，代码在 `catch` 里就地删。这条分支不是可有可无的兜底：它正是 `DishSaveTest` 唯一能覆盖到的删除路径（那一层没有 Spring 事务），另一条则由第 8 节那个联调类覆盖。
+- **删之前先查"还在不在用"**：`dishMapper.countByImage(image) > 0` 就不删。回滚之后本次请求写的那一行已经没了，此时还能查到引用，说明这张图是别的菜品在用的——客户端完全可以提交一个已存在的 `image` 路径、再因为重名失败。宁可少删一张孤儿图，也不能删掉别人正在用的图。
+- **只处理 `/uploads/...`**：`LocalFileUtil.isLocalPath` 之外一律直接返回。库里 24 条存量值是阿里云 OSS 绝对 URL（第 16 节），它们不是文件路径，不能拿去删。`countByImage` 目前只查 `dish`：`setmeal.image` 没有写接口、`employee.image` 在 mapper 里根本不出现；**将来这两处开始写本地上传图时，这个在用判断必须一起扩展**，否则会误删被套餐引用的图。
+- **新约束：`image` 是本地路径时必须真存在**（`DISH_IMAGE_NOT_FOUND` =「图片文件不存在，请重新上传」，走 `BaseException` → HTTP 200 + `code:0`，与其它业务提示一致）。这条不是顺手加的校验，而是"失败即删图"能成立的前提：重名这类失败会让图被删掉，而表单里还留着那个路径，用户改个名字重提交就会写出一条**挂在已被删掉的图上的菜品**——比孤儿文件更糟，而且没人会发现。有了这条，那种不一致状态在任何时刻都不会存在。**代价要说明白：重名失败后重提交需要重新选一次图**（前端 `el-upload` 不会自动重传）。
+- **删图这道围栏与读图同一套判据**：`LocalFileUtil.storedFile` 把 `/uploads/...` 还原成绝对路径时 `normalize()` 之后必须仍在上传根目录内，越界（`/uploads/../x`、`/uploads//etc/passwd`）拒绝并记 WARN。入参来自客户端提交的 JSON，跟 `<img src>` 那侧一样按不可信输入对待。删除方法**永不抛异常**，删不掉只记 WARN——它会在事务完成回调里被调用，那里抛出去会盖掉真正的业务错误。
+- 改动文件：`sky-common` 的 `LocalFileUtil`（补 `isLocalPath`/`exists`/`delete` 与私有 `storedFile`）、`MessageConstant`（补 `DISH_IMAGE_NOT_FOUND`）；`sky-server` 的 `DishServiceImpl`（注册回调、`deleteUploadedImage`、图片存在性校验、把原实现体抽成私有 `save`）、`DishMapper`（`countByImage`）。`@Transactional` 保持默认（只对 `RuntimeException`/`Error` 回滚），不加 `rollbackFor`：本项目所有失败路径抛的都是 `RuntimeException`。
+- 测试：`DishSaveTest` 由 15 项增到 21 项（成功不删图、失败删图、校验失败也删图、被别的菜品引用时不删、本地路径不存在被拒、OSS 绝对地址既不被拒也不被当文件删）；`LocalFileUtilTest` 由 6 项增到 9 项（存在/删除跟着磁盘走、非本地路径一律忽略、越界路径拒绝**并断言根目录外的文件没被删掉**）；新增 `DishImageRollbackDatabaseTest` 4 项（真实 MySQL：回滚后图消失且**同一次成功新增的图不受牵连**、提交时图还在、被引用的图不删、不存在的本地路径被拒）。测试总数由 103 项变为 113 项（7 项跳过）、`SKY_DB_TESTS=true` 下由 117 项变为 130 项。
+  - 那个新联调类**故意不加 `@Transactional`**：被验证的行为本身就是"事务结束时发生什么"，套一层测试事务只会把回调推迟到测试方法结束之后，断言必然落空。所以它真实提交，并在 `@AfterEach` 里按名字删掉自己造的行与文件（`DishDatabaseTest` 也补了同样的文件清理，因为它现在必须真上传图片才能通过校验）。
+- 联调实测（**后端与经 nginx 两段都验证过**）：上传 P1 → 同名新增成功，P1 留在磁盘；上传 P2 → 用同一个菜名再提交 → `{"code":0,"msg":"菜品名称已存在"}`，**P2 已从磁盘消失、P1 未受牵连**（日志里能看到 `删除上传文件：/uploads/...` 那一行，且回调里没有异常）；提交磁盘上不存在的 `/uploads/...` → 「图片文件不存在，请重新上传」；`http://localhost/api/dish` 走同一套逻辑。联调插入的行与文件都已删除，基线恢复 24 菜品 / 24 口味，上传目录里只剩 `.DS_Store`。
+- 已知未处理项（**这条链路到此为止，剩下的窗口是有意不补的**）：
+  - **进程在"文件已落盘"和"数据库提交"之间被杀掉**（kill -9、断电）：没有任何进程内回调能执行，磁盘上留下孤儿文件。
+  - **表单被放弃**：图传了、没提交就关页面，或者换了一张图。上传与新增是两个请求，后端无从知道这张图会不会被用；前端换图时不删旧图，那是前端的事。
+  - **回滚时数据库不可用**：`countByImage` 这时多半也会失败，被 catch 成一条 WARN，图就不删了（宁可留孤儿，也不能因为清理失败把原始错误顶掉）。
+  - **"是不是本次请求上传的"判断不了**：只能判断"库里有没有行引用它"。上传接口要管理员 token，能走到这一步的是自己人；但若客户端引用的是别人刚上传、还挂在别人表单里的路径，回滚会把它删掉。要根治只能给上传做一张元数据表（把"谁传的、有没有被用掉"记进库，让文件生命周期真正跟着事务走），本次不做。
+  - **前端的重提交体验变差**：如上，重名失败后同一张图已被删，必须重新选图才能再提交。这是"不留孤儿文件"换来的，接口给的是明确提示而不是静默落库。

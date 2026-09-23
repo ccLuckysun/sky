@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd" >
+<mapper namespace="com.sky.mapper.DishMapper">
+
+    <!-- 新增菜品。
+         create_time、update_time、create_user、update_user 四列直接引用、没有 <if> 兜底，值来自 AutoFillAspect。
+         dish.name 上有唯一索引 idx_dish_name，重名会抛 DuplicateKeyException，由业务层转成"菜品名称已存在"。 -->
+    <insert id="insert" parameterType="Dish" useGeneratedKeys="true" keyProperty="id">
+        insert into dish (name, category_id, price, image, description, status, create_time, update_time,
+                          create_user, update_user)
+        values (#{name}, #{categoryId}, #{price}, #{image}, #{description}, #{status}, #{createTime},
+                #{updateTime}, #{createUser}, #{updateUser})
+    </insert>
+
+</mapper>

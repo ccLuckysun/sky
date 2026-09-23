@@ -8,6 +8,7 @@ import com.sky.entity.Category;
 import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Select;
 import java.util.List;
 
 @Mapper
@@ -38,6 +39,15 @@ public interface CategoryMapper {
      */
     @Delete("delete from category where id = #{id}")
     void deleteById(Long id);
+
+    /**
+     * 根据id统计分类数量，用于校验分类是否存在。
+     * 菜品表与分类表之间没有外键约束，不显式校验就会写出一条挂着不存在分类的菜品。
+     * @param id
+     * @return 0 表示不存在
+     */
+    @Select("select count(id) from category where id = #{id}")
+    Integer countById(Long id);
 
     /**
      * 根据id修改分类，SQL 位于 resources/mapper/CategoryMapper.xml 的 update 映射。
