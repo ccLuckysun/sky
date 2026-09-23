@@ -85,4 +85,34 @@ public interface DishMapper {
      */
     int deleteByIds(@Param("ids") List<Long> ids);
 
+    /**
+     * 根据id查询菜品，供编辑页回显与修改前的存在性校验使用。
+     * <p>
+     * 列清单显式写全，不用 select *：表结构的变动不该悄悄改变接口返回的字段集合。
+     * 这里**不** join category：编辑页的回显表单只填菜品自身的字段，分类名由分类下拉框自己取，
+     * 为它多写一条 join 只是凭空多一个可能出错的地方（列表页才需要 categoryName）。
+     * <p>
+     * 同样**不能**加 @AutoFill：这是只读查询，切面会拿参数去反射调 setter，标上只会抛异常。
+     * @param id 菜品id
+     * @return 菜品实体，不存在时返回 null
+     */
+    @Select("select id, name, category_id, price, image, description, status, create_time, update_time,"
+            + " create_user, update_user from dish where id = #{id}")
+    Dish getById(Long id);
+
+    /**
+     * 根据id修改菜品，SQL 位于 resources/mapper/DishMapper.xml 的动态 update。
+     * <p>
+     * 动态 {@code <set>} 只写非 null 字段，因此调用方传什么就改什么：
+     * {@code DishServiceImpl#update} 只填业务字段，修改时间与修改人由 AutoFillAspect 依据
+     * {@code @AutoFill(UPDATE)} 填充。SQL 的列清单里没有 create_time / create_user——
+     * 更新不改创建信息。
+     * <p>
+     * 全项目只有 insert 与这里的 update 标了 @AutoFill，两条注解都不能删。
+     * @param dish 至少要有 id；只改非 null 的列
+     * @return 影响行数（业务层不校验：把某行改回它自己当前的值时 MySQL 返回 0）
+     */
+    @AutoFill(OperationType.UPDATE)
+    int update(Dish dish);
+
 }

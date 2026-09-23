@@ -192,6 +192,134 @@ public class DishServiceImpl implements DishService {
     }
 
     /**
+     * 修改菜品及其口味。
+     * <p>
+     * 事务与图片补偿的骨架与 {@link #saveWithFlavor} 逐字一致，理由也完全相同：dish 与 dish_flavor
+     * 要同成同败，而磁盘上的图片根本不在这套事务里，只能靠"确实回滚之后删掉"来补偿。
+     * 区别只有一处：这里校验的是"菜品必须已存在"，而新增不需要。
+     * @param dishDTO 菜品信息，必须带 id
+     */
+    @Transactional
+    public void updateWithFlavor(DishDTO dishDTO) {
+        String image = dishDTO == null ? null : dishDTO.getImage();
+        boolean deferred = TransactionSynchronizationManager.isSynchronizationActive();
+        if (deferred) {
+            //注册点必须在动任何表之前：校验失败、菜品不存在、分类不存在、重名、口味写入失败——
+            //所有失败路径都要被这个回调覆盖。
+            registerImageCleanup(image);
+        }
+        try {
+            update(dishDTO);
+        } catch (RuntimeException | Error ex) {
+            //没有活动事务时等不到回调（单测里直接 new 出本类，或将来有人删掉了 @Transactional），
+            //就地删除，不让清理逻辑静默失效。
+            if (!deferred) {
+                deleteUploadedImage(image);
+            }
+            throw ex;
+        }
+    }
+
+    /**
+     * 修改菜品与口味的实现体，事务与图片补偿由 {@link #updateWithFlavor} 负责。
+     * <p>
+     * 顺序是固定的，前面任何一步失败都不能已经动过表：
+     * 校验 → id 校验（含菜品是否存在）→ 分类存在 → 登录上下文 → 改 dish → 整组替换口味。
+     */
+    private void update(DishDTO dishDTO) {
+        if (dishDTO == null) {
+            throw new BaseException(MessageConstant.DISH_ID_EMPTY);
+        }
+        //与新增共用同一套校验（名称/分类/价格/图片存在性/描述/状态/口味列表），不重复实现一遍。
+        validate(dishDTO);
+
+        Long id = dishDTO.getId();
+        if (id == null) {
+            throw new BaseException(MessageConstant.DISH_ID_EMPTY);
+        }
+        //主键从 1 开始，0 与负数永远不可能是库里存在的行；顺带挡掉"改一个不存在的菜品"。
+        if (id <= 0 || dishMapper.getById(id) == null) {
+            throw new BaseException(MessageConstant.DISH_NOT_FOUND);
+        }
+
+        //菜品与分类之间没有外键约束，不显式校验就会把菜品改到一个不存在的分类下，
+        //它随后在任何按分类筛选的列表里都查不到。
+        if (categoryMapper.countById(dishDTO.getCategoryId()) == 0) {
+            throw new BaseException(MessageConstant.CATEGORY_NOT_FOUND);
+        }
+
+        //先拦掉未登录的请求，避免写出没有修改人的记录（AutoFillAspect 在缺上下文时不会补操作人）。
+        if (BaseContext.getCurrentId() == null) {
+            throw new UserNotLoginException(MessageConstant.USER_NOT_LOGIN);
+        }
+
+        Dish dish = new Dish();
+        //这里**不能**像 save 那样忽略 "id"：更新靠它定位行。
+        //Dish 没有 flavors 属性，口味列表不会被拷过去；Dish 也没有 categoryName，前端回传的
+        //多余字段进不来（它在 JSON 反序列化阶段就已经被 DishDTO 丢掉了）。
+        BeanUtils.copyProperties(dishDTO, dish);
+        //修改时间与修改人由 AutoFillAspect 依据 @AutoFill(UPDATE) 填充，业务层不自己设置；
+        //createTime / createUser 更不该出现在实体里——update 的列清单里根本没有这两列（见 DishMapper.xml）。
+
+        try {
+            //不校验影响行数：把某行改回它自己当前的值时 MySQL 返回 0 行，这不是失败。
+            dishMapper.update(dish);
+        } catch (DuplicateKeyException ex) {
+            //必须显式 catch：全局处理器里那条 SQLIntegrityConstraintViolationException 分支
+            //会把索引冲突渲染成带引号的 '名字'已存在，提示与新增接口对不上。
+            throw new BaseException(MessageConstant.DISH_NAME_ALREADY_EXISTS);
+        }
+
+        //口味整组替换：前端编辑页总是把当前口味列表整份回传，"清掉再插一遍"正好对上它的语义，
+        //比逐条比对新旧口味再去增删改简单得多，也不会留下半新半旧的口味。
+        //复用删除菜品那条批量方法（deleteByDishIds 收的是 id 列表），不为单个 id 另开一条 SQL。
+        dishFlavorMapper.deleteByDishIds(List.of(id));
+
+        List<DishFlavor> flavors = dishDTO.getFlavors();
+        //flavors 缺省（null）与传 [] 等价：DishDTO 的字段初始值就是空列表，
+        //JSON 里不带该字段时拿到的也是空列表，两者都表示"这道菜没有口味"。
+        if (flavors != null && !flavors.isEmpty()) {
+            for (DishFlavor flavor : flavors) {
+                if (flavor == null) {
+                    //正常走不到这里：validate 已经拦过 null 元素，留着只是不让它变成 NPE。
+                    throw new BaseException("口味数据不能为空");
+                }
+                //口味主键一律由数据库生成，dishId 一律用本次修改的菜品id覆盖：
+                //前端回显时拿到什么就回传什么，客户端传的 id/dishId 一律不采纳。
+                flavor.setId(null);
+                flavor.setDishId(id);
+            }
+            dishFlavorMapper.insertBatch(flavors);
+        }
+    }
+
+    /**
+     * 根据id查询菜品，供编辑页回显。
+     * <p>
+     * 用 {@code new DishVO()} 而不是 {@code DishVO.builder()} 构造：{@code @Builder} 不会应用字段初始值，
+     * builder 出来的 flavors 是 null，而前端编辑页拿到的 data.flavors 会被直接调 .map ——
+     * 没有口味的菜必须给出空数组，null 会让整页抛 TypeError 打不开。
+     * <p>
+     * 不 join category：编辑页不读 categoryName，分类名由分类下拉框自己取。
+     * @param id 菜品id
+     * @return 菜品详情，flavors 一定不是 null
+     */
+    public DishVO getById(Long id) {
+        Dish dish = id == null ? null : dishMapper.getById(id);
+        if (dish == null) {
+            throw new BaseException(MessageConstant.DISH_NOT_FOUND);
+        }
+
+        DishVO dishVO = new DishVO();
+        BeanUtils.copyProperties(dish, dishVO);
+
+        //查不到口味时兜成空列表而不是留着 null：这是编辑页能否打开的硬前提。
+        List<DishFlavor> flavors = dishFlavorMapper.getByDishId(id);
+        dishVO.setFlavors(flavors == null ? new ArrayList<>() : flavors);
+        return dishVO;
+    }
+
+    /**
      * 校验新增菜品的全部输入。列宽取自数据库实际结构（dish.name、dish_flavor.name 为 varchar(32)，
      * image/description/value 为 varchar(255)，price 为 decimal(10,2)），
      * 目的是把"数据库会报错"变成"接口给出一句能看懂的话"。

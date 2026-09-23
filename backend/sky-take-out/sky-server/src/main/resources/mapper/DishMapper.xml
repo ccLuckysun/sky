@@ -67,4 +67,25 @@
         </foreach>
     </delete>
 
+    <!-- 动态更新：只写入非 null 字段，调用方传什么就改什么。
+         update_time / update_user 的 <if> 不能省：AutoFillAspect 在缺少登录上下文时
+         会保留实体上的原值（也就是 null），靠这两个 <if> 才不至于把列清成 null —— 那会把上一个操作人抹掉。
+         列清单里**没有** create_time / create_user：更新不改创建信息，一旦写进去
+         （哪怕值是 null）就等于凭空抹掉了"谁在什么时候建的"。
+         dish.name 上有唯一索引 idx_dish_name，重名会抛 DuplicateKeyException，由业务层转成"菜品名称已存在"。 -->
+    <update id="update" parameterType="Dish">
+        update dish
+        <set>
+            <if test="name != null">name = #{name},</if>
+            <if test="categoryId != null">category_id = #{categoryId},</if>
+            <if test="price != null">price = #{price},</if>
+            <if test="image != null">image = #{image},</if>
+            <if test="description != null">description = #{description},</if>
+            <if test="status != null">status = #{status},</if>
+            <if test="updateTime != null">update_time = #{updateTime},</if>
+            <if test="updateUser != null">update_user = #{updateUser},</if>
+        </set>
+        where id = #{id}
+    </update>
+
 </mapper>

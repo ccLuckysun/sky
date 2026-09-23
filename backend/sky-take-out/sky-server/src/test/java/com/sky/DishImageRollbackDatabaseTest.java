@@ -26,6 +26,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -121,6 +122,31 @@ class DishImageRollbackDatabaseTest {
         return jdbc.queryForObject("select count(*) from dish where name = ?", Integer.class, name);
     }
 
+    private long dishId(String name) {
+        Long id = jdbc.queryForObject("select id from dish where name = ?", Long.class, name);
+        assertNotNull(id, "测试数据未按预期写入：" + name);
+        return id;
+    }
+
+    /**
+     * 修改接口的请求体，形状与编辑页提交的一致：带上回显多出来的 categoryName、
+     * price 是字符串、每个口味带着回显拿到的 id/dishId。
+     */
+    private String updateBody(long id, String name, long categoryId, String image) {
+        return "{\"id\":" + id + ",\"name\":\"" + name + "\",\"categoryId\":" + categoryId + ","
+                + "\"price\":\"13.50\",\"image\":\"" + image + "\",\"description\":\"图片回滚联调\","
+                + "\"status\":0,\"categoryName\":\"不参与更新的字段\","
+                + "\"flavors\":[{\"id\":1,\"dishId\":" + id + ",\"name\":\"甜味\",\"value\":\"[\\\"无糖\\\"]\"}]}";
+    }
+
+    /** 提交一次修改，返回响应体，由调用方断言成功还是失败。 */
+    private String submitUpdate(long id, String name, long categoryId, String image) throws Exception {
+        return mvc.perform(put("/admin/dish").header("token", adminToken())
+                        .contentType("application/json").content(updateBody(id, name, categoryId, image)))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+    }
+
     @Test
     void deletesTheUploadedImageWhenTheInsertRollsBack() throws Exception {
         long categoryId = existingCategoryId();
@@ -182,5 +208,69 @@ class DishImageRollbackDatabaseTest {
         assertEquals(0, json.readTree(response).path("code").asInt());
         assertEquals("图片文件不存在，请重新上传", json.readTree(response).path("msg").asText());
         assertEquals(0, dishCount(name));
+    }
+
+    /**
+     * 修改失败时，<b>这次请求新换的那张图</b>要跟着回滚一并删掉。
+     * <p>
+     * 造法：先真上传两张图，分别建成两道菜（这样库里确实有"别人正在用"的图，能验证误删判断不会过度触发）；
+     * 再把第二道菜改名成第一道菜的名字并换上新上传的第三张图 —— dish.name 上的全库唯一索引必然让这次修改回滚。
+     * 换图是编辑页最常见的操作，而"图换了、行没改"正是最需要补偿的场景：不删就是一张永远没人用的孤儿图。
+     */
+    @Test
+    void deletesTheNewlyChosenImageWhenTheUpdateRollsBack() throws Exception {
+        long categoryId = existingCategoryId();
+        String keptName = uniqueName("dish");
+        String keptImage = uploadImage();
+        saveOk(keptName, categoryId, keptImage);
+
+        String targetName = uniqueName("dish");
+        String targetImage = uploadImage();
+        saveOk(targetName, categoryId, targetImage);
+        long targetId = dishId(targetName);
+
+        //编辑页换了一张图再提交，但名字改成了另一道菜的 → 唯一索引冲突，整个修改回滚
+        String doomedImage = uploadImage();
+        String response = submitUpdate(targetId, keptName, categoryId, doomedImage);
+
+        assertEquals(0, json.readTree(response).path("code").asInt());
+        assertEquals("菜品名称已存在", json.readTree(response).path("msg").asText());
+        //这一行必须原样：改名没成功，图片也不该被改掉
+        assertEquals(targetImage, jdbc.queryForObject("select image from dish where id = ?", String.class, targetId),
+                "回滚后这一行的 image 必须还是原值");
+        //新换的那张图没人用了，必须删掉
+        assertFalse(localFileUtil.exists(doomedImage), "修改回滚后本次请求新换的图片必须被删掉：" + doomedImage);
+        //别的菜在用的图不能被牵连
+        assertTrue(localFileUtil.exists(keptImage), "别的菜品在用的图片不能被牵连：" + keptImage);
+        assertTrue(localFileUtil.exists(targetImage), "这道菜原本的图片也还在用，不能删：" + targetImage);
+    }
+
+    /**
+     * 图片没换（请求里的 image 就是这道菜当前的 image）时，修改失败<b>不能</b>删图。
+     * <p>
+     * 编辑页只改个价格、不碰图片时走的就是这条路径。回滚那一刻这一行还在（image 没变），
+     * {@code countByImage > 0} 会查到它→ 判定为"还有人在用"→ 跳过删除。
+     * 少了这道守卫，任何一次修改失败都会把这道菜的图片删掉，页面立刻破图。
+     * <p>
+     * 与上一条用例共用同一套失败手段（撞另一道菜的名字），只有 image 一个变量不同。
+     */
+    @Test
+    void keepsTheCurrentImageWhenTheUpdateFailsWithoutChangingIt() throws Exception {
+        long categoryId = existingCategoryId();
+        String keptName = uniqueName("dish");
+        saveOk(keptName, categoryId, uploadImage());
+
+        String targetName = uniqueName("dish");
+        String targetImage = uploadImage();
+        saveOk(targetName, categoryId, targetImage);
+        long targetId = dishId(targetName);
+
+        //image 原样回传（编辑页没动图片），名字改成另一道菜的 → 同样回滚
+        String response = submitUpdate(targetId, keptName, categoryId, targetImage);
+
+        assertEquals(0, json.readTree(response).path("code").asInt());
+        assertEquals("菜品名称已存在", json.readTree(response).path("msg").asText());
+        assertTrue(localFileUtil.exists(targetImage),
+                "图片没换时，修改失败不能删掉这道菜正在用的图片：" + targetImage);
     }
 }

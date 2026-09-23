@@ -3,6 +3,7 @@ package com.sky.service;
 import com.sky.dto.DishDTO;
 import com.sky.dto.DishPageQueryDTO;
 import com.sky.result.PageResult;
+import com.sky.vo.DishVO;
 
 public interface DishService {
 
@@ -35,5 +36,29 @@ public interface DishService {
      * @param ids 逗号分隔的菜品id；为空或含任何非法 id 时整体拒绝，不会删掉其中合法的那些
      */
     void deleteByIds(String ids);
+
+    /**
+     * 修改菜品及其口味。
+     * <p>
+     * 口味是**整组替换**：先按菜品id删掉全部旧口味，再把请求里的口味重新插一遍。
+     * 逐条比对新旧口味再去增删改要复杂得多，而前端的编辑页本来就总是把当前口味列表整份回传，
+     * 整组替换正好对上它的语义。（此时 flavors 为 null 或空列表都表示"清空口味"。）
+     * <p>
+     * 与新增一样，dish 与 dish_flavor 在同一个事务里；图片文件的补偿见
+     * {@code DishServiceImpl#updateWithFlavor}。
+     * @param dishDTO 菜品信息，必须带 id；flavors 可为空
+     */
+    void updateWithFlavor(DishDTO dishDTO);
+
+    /**
+     * 根据id查询菜品，供编辑页回显。
+     * <p>
+     * flavors 一定是数组：没有口味的菜品返回空列表而不是 null，否则前端编辑页会对
+     * {@code data.flavors} 直接调 .map 而抛 TypeError，整页打不开。
+     * categoryName 不填（编辑页不读它，不为它多写一条 join）。
+     * @param id 菜品id
+     * @return 菜品详情，不存在时抛业务异常
+     */
+    DishVO getById(Long id);
 
 }

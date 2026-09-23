@@ -3,6 +3,7 @@ package com.sky.mapper;
 import com.sky.entity.DishFlavor;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
 
 import java.util.List;
 
@@ -31,5 +32,19 @@ public interface DishFlavorMapper {
      * @return 实际删除的行数（该菜品没有口味时是 0，业务层不校验这个值）
      */
     int deleteByDishIds(@Param("ids") List<Long> ids);
+
+    /**
+     * 根据菜品id查询口味，供编辑页回显使用。
+     * <p>
+     * 返回 {@code List} 而不是单个对象：一个菜品可以有零到多组口味，调用方必须能区分
+     * "没有口味"（空列表，接口要返回 {@code []}）与"查不到"——这里统一按空列表处理，
+     * 前端编辑页会直接对结果调 .map，返回 null 会把整页打废。
+     * <p>
+     * 这里**不能**加 @AutoFill：dish_flavor 表没有审计列，切面反射 setter 会直接抛异常。
+     * @param dishId 菜品id
+     * @return 该菜品的口味列表，没有口味时是空列表
+     */
+    @Select("select id, dish_id, name, value from dish_flavor where dish_id = #{dishId}")
+    List<DishFlavor> getByDishId(Long dishId);
 
 }
