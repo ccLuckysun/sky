@@ -40,4 +40,31 @@
         order by d.update_time desc, d.id desc
     </select>
 
+    <!-- 批量删除前的守卫：统计这批 id 里有多少条在起售。status = 1 即 StatusConstant.ENABLE。
+         用 count(*) 而不是把行查出来，只需要判断"有没有"；id 不存在的行自然不计入，
+         所以"删一个已经被别人删掉的菜品"不会在这里被拒。
+         单参数集合必须写 @Param("ids")，XML 这边才认 collection="ids"：
+         不写注解时 MyBatis 只暴露 collection / list 两个键，会抛 BindingException，
+         而且这条路径只在第一次真正调用时才炸。 -->
+    <select id="countOnSaleByIds" resultType="java.lang.Integer">
+        select count(*)
+        from dish
+        where status = 1
+        and id in
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </select>
+
+    <!-- 批量删除菜品。调用方已保证先删 dish_flavor，且 ids 非空（空集合拼出来的 in () 是语法错误，
+         业务层在解析参数时就拦下了空输入）。
+         不校验影响行数：id 不存在的行不参与删除，MySQL 返回 0 行，业务层不当作失败——
+         前端重复点击删除、或菜品已被别人删掉，都应该是幂等的。 -->
+    <delete id="deleteByIds">
+        delete from dish where id in
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </delete>
+
 </mapper>

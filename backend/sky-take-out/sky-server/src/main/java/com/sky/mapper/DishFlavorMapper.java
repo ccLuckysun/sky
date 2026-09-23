@@ -19,4 +19,17 @@ public interface DishFlavorMapper {
      */
     void insertBatch(@Param("flavors") List<DishFlavor> flavors);
 
+    /**
+     * 按菜品id批量删除口味，SQL 位于 resources/mapper/DishFlavorMapper.xml。
+     * <p>
+     * 删除菜品时先清子表：dish_flavor 与 dish 之间没有外键，但只要两处都存在，
+     * dish_id 悬空的口味行就是一条谁也看不见、也永远删不掉的垃圾数据。
+     * <p>
+     * 这里**不能**加 @AutoFill：dish_flavor 表没有审计列，而 AutoFillAspect 会把第一个参数
+     * （这里是 List）当实体反射调用 setter，标上只会在运行期抛异常。
+     * @param ids 菜品id集合，调用方需保证非空（空集合会拼出非法的 in ()）
+     * @return 实际删除的行数（该菜品没有口味时是 0，业务层不校验这个值）
+     */
+    int deleteByDishIds(@Param("ids") List<Long> ids);
+
 }

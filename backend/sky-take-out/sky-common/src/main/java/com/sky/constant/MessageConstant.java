@@ -10,6 +10,8 @@ public class MessageConstant {
     public static final String ALREADY_EXISTS = "已存在";
     public static final String PAGE_PARAM_ERROR = "页码和每页记录数必须为正整数";
     public static final String EMPLOYEE_ID_EMPTY = "员工id不能为空";
+    public static final String DISH_ID_EMPTY = "菜品id不能为空";
+    public static final String DISH_ID_FORMAT_ERROR = "菜品id格式错误";
     public static final String STATUS_ERROR = "状态值不合法，只能为1(启用)或0(禁用)";
 
     public static final String PASSWORD_ERROR = "密码错误";

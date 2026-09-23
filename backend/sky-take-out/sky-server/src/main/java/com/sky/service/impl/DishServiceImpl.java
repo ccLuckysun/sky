@@ -10,10 +10,12 @@ import com.sky.dto.DishPageQueryDTO;
 import com.sky.entity.Dish;
 import com.sky.entity.DishFlavor;
 import com.sky.exception.BaseException;
+import com.sky.exception.DeletionNotAllowedException;
 import com.sky.exception.UserNotLoginException;
 import com.sky.mapper.CategoryMapper;
 import com.sky.mapper.DishFlavorMapper;
 import com.sky.mapper.DishMapper;
+import com.sky.mapper.SetmealMapper;
 import com.sky.result.PageResult;
 import com.sky.service.DishService;
 import com.sky.utils.LocalFileUtil;
@@ -29,7 +31,11 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * 菜品业务层
@@ -46,6 +52,8 @@ public class DishServiceImpl implements DishService {
     private static final BigDecimal MAX_PRICE = new BigDecimal("99999999.99");
     /** dish.price 的小数位数 */
     private static final int PRICE_SCALE = 2;
+    /** 合法的菜品id：只允许 ASCII 十进制数字，不接受 '+'、空白、小数点、分号等任何写法 */
+    private static final Pattern DISH_ID_PATTERN = Pattern.compile("\\d+");
 
     @Autowired
     private DishMapper dishMapper;
@@ -53,6 +61,8 @@ public class DishServiceImpl implements DishService {
     private DishFlavorMapper dishFlavorMapper;
     @Autowired
     private CategoryMapper categoryMapper;
+    @Autowired
+    private SetmealMapper setmealMapper;
     @Autowired
     private LocalFileUtil localFileUtil;
 
@@ -303,6 +313,87 @@ public class DishServiceImpl implements DishService {
             //分页参数存放在 ThreadLocal，查询未真正执行时不会被 PageHelper 清掉，必须显式清理以免污染复用的线程。
             PageHelper.clearPage();
         }
+    }
+
+    /**
+     * 批量删除菜品及其口味。
+     * <p>
+     * 顺序是固定的，前面任何一步失败都不能已经动过表：
+     * 解析参数 → 守卫一（起售不能删）→ 守卫二（被套餐引用不能删）→ 删 dish_flavor → 删 dish。
+     * 解析阶段就把整串 id 校验完才允许碰数据库，所以"ids 里混了一个非法值"是整体拒绝，
+     * 不存在"删掉一半再报错"。两条守卫的顺序保证同时命中时报的是"起售中的菜品不能删除"。
+     * <p>
+     * 删子表再删主表：dish_flavor 与 dish 之间没有外键，反过来先删主表会留下指向不存在菜品的口味行。
+     * <p>
+     * 有意不做的两件事：
+     * 一是不删图片文件——库里存量图片是阿里云 OSS 绝对地址，删文件不可逆，而"这张图还有没有人在用"
+     * 目前的判据只看 dish 表，误删的风险大于收益（见 deleteUploadedImage 的取舍）；
+     * 二是不校验影响行数——id 不存在时 MySQL 返回 0，重复点击删除应当幂等。
+     * @param ids 前端原样传来的逗号分隔菜品id
+     */
+    @Transactional
+    public void deleteByIds(String ids) {
+        List<Long> idList = parseIds(ids);
+
+        //守卫一：起售中的菜品不能删。count(*) 不会返回 null，null 判断只是让"统计不到"等同"没有命中"。
+        Integer onSale = dishMapper.countOnSaleByIds(idList);
+        if (onSale != null && onSale > 0) {
+            throw new DeletionNotAllowedException(MessageConstant.DISH_ON_SALE);
+        }
+
+        //守卫二：被套餐引用的菜品不能删。它排在起售判断之后，两者同时命中时报的是上面那条消息。
+        Integer relatedBySetmeal = setmealMapper.countByDishIds(idList);
+        if (relatedBySetmeal != null && relatedBySetmeal > 0) {
+            throw new DeletionNotAllowedException(MessageConstant.DISH_BE_RELATED_BY_SETMEAL);
+        }
+
+        //不校验影响行数：id 不存在的行不参与删除，MySQL 返回 0 行，这不是错误。
+        //前端重复点击删除、或者菜品已经被别人删掉，都应当安静地成功。
+        dishFlavorMapper.deleteByDishIds(idList);
+        dishMapper.deleteByIds(idList);
+    }
+
+    /**
+     * 解析前端传来的逗号分隔菜品id。
+     * <p>
+     * 逐个 token 校验，任一不合法就整体拒绝：解析完成之前一次 mapper 都不会被调用，
+     * 所以库里不会出现"删了一部分"的中间状态。
+     * <p>
+     * 用 LinkedHashSet 去重并保留出现顺序：前端批量删除时可能重复勾选同一个菜品，
+     * 重复的 id 下发给 SQL 没有意义，还会让 in 列表无谓地变长。
+     */
+    private List<Long> parseIds(String ids) {
+        if (ids == null || ids.trim().isEmpty()) {
+            throw new BaseException(MessageConstant.DISH_ID_EMPTY);
+        }
+
+        // split 必须带 -1 这个 limit：默认的 split(",") 会丢掉末尾的空串，
+        // "1,2," 会被切成 ["1","2"] 而当成合法输入，"1,,2" 中间那个空串倒是能留下。
+        // 两种情况都必须是"格式错误"，所以这里显式要求保留末尾空串。
+        String[] tokens = ids.split(",", -1);
+        Set<Long> idSet = new LinkedHashSet<>(tokens.length);
+        for (String token : tokens) {
+            String value = token.trim();
+            //空白 token（"1,,2" 里的空串、"1,2," 末尾那个）与非十进制数字
+            //（"abc"、"1.5"、"1;2"、"-1"）都在这里被拒。
+            if (!DISH_ID_PATTERN.matcher(value).matches()) {
+                throw new BaseException(MessageConstant.DISH_ID_FORMAT_ERROR);
+            }
+            long id;
+            try {
+                id = Long.parseLong(value);
+            } catch (NumberFormatException ex) {
+                //超出 long 范围（如 99999999999999999999）：不能让它冒成 500。
+                throw new BaseException(MessageConstant.DISH_ID_FORMAT_ERROR);
+            }
+            if (id <= 0) {
+                //主键从 1 开始，0 与负数永远是非法id（且库里的 24 道菜 id 从 46 起）。
+                throw new BaseException(MessageConstant.DISH_ID_FORMAT_ERROR);
+            }
+            idSet.add(id);
+        }
+        //LinkedHashSet 的迭代顺序就是插入顺序，转成 List 后下发给 mapper。
+        return new ArrayList<>(idSet);
     }
 
 }

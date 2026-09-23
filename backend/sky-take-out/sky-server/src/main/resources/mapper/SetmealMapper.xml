@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd" >
+<mapper namespace="com.sky.mapper.SetmealMapper">
+
+    <!-- 这个 namespace 下同时存在注解式的 countByCategoryId 与这里的 XML 映射：
+         MyBatis 允许两者共存，前提是 statement id 不重复（这里新增的 countByDishIds 是新的 id）。
+         本文件由 application.yml 的 mybatis.mapper-locations: classpath:mapper/*.xml 扫描到。
+
+         统计这批菜品被多少个套餐引用，供"删除菜品前"的守卫使用。
+         查的是中间表 setmeal_dish 而不是 setmeal：关联关系记在中间表里（列 setmeal_id / dish_id），
+         套餐表本身没有菜品id。同一个菜品被多个套餐引用时会计多条，这里只关心是否大于 0。
+         单参数集合必须写 @Param("ids")，XML 这边才认 collection="ids"：不写注解时
+         MyBatis 只暴露 collection / list 两个键，会抛 BindingException，且只在第一次真调用时才炸。 -->
+    <select id="countByDishIds" resultType="java.lang.Integer">
+        select count(*)
+        from setmeal_dish
+        where dish_id in
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </select>
+
+</mapper>

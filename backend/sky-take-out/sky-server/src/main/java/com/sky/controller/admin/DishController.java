@@ -9,10 +9,12 @@ import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -54,5 +56,21 @@ public class DishController {
         log.info("菜品分页查询：{}", dishPageQueryDTO);
         PageResult pageResult = dishService.pageQuery(dishPageQueryDTO);
         return Result.success(pageResult);
+    }
+
+    /**
+     * 批量删除菜品
+     *
+     * @param ids 逗号分隔的菜品id，如 {@code 1,2,3}。单条删除走同一个参数，值是单个 id。
+     * @return 成功时 data 与 msg 均为 null
+     */
+    @DeleteMapping
+    @ApiOperation("批量删除菜品")
+    public Result<String> delete(@RequestParam(required = false) String ids) {
+        log.info("批量删除菜品：ids={}", ids);
+        dishService.deleteByIds(ids);
+        //接口文档把 data 标为非必须，前端只判 code，因此返回空的 Result（data、msg 均为 null）；
+        //与 POST /admin/dish 的取舍一致。
+        return Result.success();
     }
 }

@@ -13,4 +13,15 @@
         </foreach>
     </insert>
 
+    <!-- 按菜品id批量删除口味，删除菜品时先清子表再删主表：dish_flavor 与 dish 之间没有外键，
+         先删主表就会留下一批指向不存在菜品的口味行，它们在任何按 dish_id 查口味的逻辑里都看不到。
+         条件是 dish_id in (...)，只匹配本次要删的菜品，别的菜品的口味一行都不受影响。
+         单参数集合必须写 @Param("ids")，否则 collection="ids" 绑定不上（见 insertBatch 那段的同类问题）。 -->
+    <delete id="deleteByDishIds">
+        delete from dish_flavor where dish_id in
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </delete>
+
 </mapper>

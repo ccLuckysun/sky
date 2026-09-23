@@ -7,7 +7,10 @@ import com.sky.entity.Dish;
 import com.sky.enumeration.OperationType;
 import com.sky.vo.DishVO;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+
+import java.util.List;
 
 @Mapper
 public interface DishMapper {
@@ -56,5 +59,30 @@ public interface DishMapper {
      * @return 携带 total 的分页结果，每条记录带分类名称
      */
     Page<DishVO> pageQuery(DishPageQueryDTO dishPageQueryDTO);
+
+    /**
+     * 统计这批菜品里有多少条在起售。SQL 位于 resources/mapper/DishMapper.xml。
+     * <p>
+     * 用于批量删除前的守卫：起售中的菜品不允许删除。用 count 而不是把菜品查出来，
+     * 是因为只需要知道"有没有"；id 不存在的行自然不计入，所以"删一个已经没了的菜品"不会因此被拒。
+     * <p>
+     * 这里**不能**加 @AutoFill：AutoFillAspect 的切点会拦下 com.sky.mapper 包下所有标了注解的方法，
+     * 并把第一个参数当实体反射调用审计字段的 setter，标在只读方法上会在运行期抛 IllegalStateException。
+     * @param ids 待删除的菜品id，调用方需保证非空（空集合会拼出非法的 in ()）
+     * @return 其中 status = 1（StatusConstant.ENABLE）的条数，count 不会返回 null
+     */
+    Integer countOnSaleByIds(@Param("ids") List<Long> ids);
+
+    /**
+     * 按id批量删除菜品。SQL 位于 resources/mapper/DishMapper.xml。
+     * <p>
+     * 调用方（DishServiceImpl#deleteByIds）必须先删 dish_flavor 再调这里：两张表没有外键，
+     * 反过来先删主表会留下指向不存在菜品的口味行。
+     * <p>
+     * 同样**不能**加 @AutoFill：删除没有审计字段可填，标上只会让切面拿 List 去反射调 setter 而抛异常。
+     * @param ids 待删除的菜品id，调用方需保证非空
+     * @return 实际删除的行数（id 不存在的行不计入，业务层不校验这个值）
+     */
+    int deleteByIds(@Param("ids") List<Long> ids);
 
 }
