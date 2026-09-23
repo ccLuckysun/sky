@@ -2,15 +2,18 @@ package com.sky.config;
 
 import com.sky.interceptor.JwtTokenAdminInterceptor;
 import com.sky.json.JacksonObjectMapper;
+import com.sky.utils.LocalFileUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.io.Resource;
 import org.springframework.http.converter.HttpMessageConverter;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurationSupport;
+import org.springframework.web.servlet.resource.PathResourceResolver;
 import springfox.documentation.builders.ApiInfoBuilder;
 import springfox.documentation.builders.PathSelectors;
 import springfox.documentation.builders.RequestHandlerSelectors;
@@ -18,6 +21,8 @@ import springfox.documentation.service.ApiInfo;
 import springfox.documentation.spi.DocumentationType;
 import springfox.documentation.spring.web.plugins.Docket;
 
+import java.io.IOException;
+import java.nio.file.Path;
 import java.util.List;
 
 /**
@@ -31,12 +36,20 @@ public class WebMvcConfiguration extends WebMvcConfigurationSupport {
     private JwtTokenAdminInterceptor jwtTokenAdminInterceptor;
 
     /**
+     * 注入上传工具还有一层作用：保证"创建上传目录"先于下面注册静态资源映射执行。
+     */
+    @Autowired
+    private LocalFileUtil localFileUtil;
+
+    /**
      * 注册自定义拦截器
      *
      * @param registry
      */
     protected void addInterceptors(InterceptorRegistry registry) {
         log.info("开始注册自定义拦截器...");
+        //只拦 /admin/**。上传文件的访问路径必须留在拦截范围外：img 标签发出的请求带不上 token，
+        //把它加进来会让全站图片直接裂掉。
         registry.addInterceptor(jwtTokenAdminInterceptor)
                 .addPathPatterns("/admin/**")
                 .excludePathPatterns("/admin/employee/login");
@@ -87,5 +100,33 @@ public class WebMvcConfiguration extends WebMvcConfigurationSupport {
         //swagger接口测试网址设置    localhost：8080/doc.html
         registry.addResourceHandler("/doc.html").addResourceLocations("classpath:/META-INF/resources/");
         registry.addResourceHandler("/webjars/**").addResourceLocations("classpath:/META-INF/resources/webjars/");
+        addUploadResourceHandler(registry);
+    }
+
+    /**
+     * 上传文件（本地磁盘）的访问入口，如 /uploads/2026/09/23/xxx.jpg。
+     * <p>
+     * 注意：本类继承了 WebMvcConfigurationSupport，Spring Boot 的默认静态资源配置已整体退避，
+     * spring.web.resources.* / spring.mvc.static-path-pattern 配了也不生效（而且不会报错），
+     * 要换上传目录只能改 sky.upload.dir 或这里。
+     */
+    private void addUploadResourceHandler(ResourceHandlerRegistry registry) {
+        Path uploadRoot = localFileUtil.getRoot();
+        registry.addResourceHandler(LocalFileUtil.URL_PREFIX + "/**")
+                .addResourceLocations(LocalFileUtil.fileLocation(uploadRoot))
+                //resourceChain(false) 只为拿到注册 resolver 的入口，不启用资源缓存
+                .resourceChain(false)
+                .addResolver(new PathResourceResolver() {
+                    @Override
+                    protected Resource getResource(String resourcePath, Resource location) throws IOException {
+                        Resource resource = super.getResource(resourcePath, location);
+                        //这个入口匿名可读（这是必须的），所以不依赖框架自身的路径规范化行为，
+                        //明确要求解析结果仍在上传目录内，挡掉 ../ 与各种编码变形导致的越界读取
+                        if (resource == null || !resource.getFile().toPath().normalize().startsWith(uploadRoot)) {
+                            return null;
+                        }
+                        return resource;
+                    }
+                });
     }
 }

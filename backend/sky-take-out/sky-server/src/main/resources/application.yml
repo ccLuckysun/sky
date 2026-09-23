@@ -1,11 +1,21 @@
 server:
   port: 8080
+  tomcat:
+    # 请求体超过这个值时 Tomcat 不再读完 body 直接断连，客户端只会看到 ERR_CONNECTION_RESET、
+    # 拿不到下面那个"文件过大"的 JSON。不能写 -1：Boot 的 DataSize 不接受负数，会让应用起不来。
+    max-swallow-size: 10MB
 
 spring:
   profiles:
     active: dev
   main:
     allow-circular-references: true
+  servlet:
+    multipart:
+      # 前端上传组件限制单张图片 2M，这里必须不小于 2；Spring Boot 默认只有 1M，
+      # 不改的话 1M~2M 的图片会直接上传失败
+      max-file-size: 10MB
+      max-request-size: 10MB
   datasource:
     druid:
       driver-class-name: ${sky.datasource.driver-class-name}
@@ -30,6 +40,12 @@ logging:
         controller: info
 
 sky:
+  upload:
+    # 上传文件的存放目录，不写绝对路径：相对路径会以 sky-server 模块目录为基准解析，
+    # 项目整体搬到别的路径、换机器克隆后都不用改这里（解析逻辑见 UploadConfiguration）。
+    # 该目录由 WebMvcConfiguration.addResourceHandlers 注册为静态资源；本项目继承了
+    # WebMvcConfigurationSupport，spring.web.resources.* 已整体退避，配了也不生效。
+    dir: uploads
   jwt:
     # 设置jwt签名加密时使用的秘钥
     admin-secret-key: itcast

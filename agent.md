@@ -1,13 +1,13 @@
 # 项目速查：苍穹外卖（waimai）
 
-> 更新日期：2026-09-22。依据当前工作区源码整理；与最新提交是否一致以 `git status --short` 为准。
+> 更新日期：2026-09-23。依据当前工作区源码整理；与最新提交是否一致以 `git status --short` 为准。
 > 初次整理为静态阅读；员工登录增量已补上令牌校验、数据库账号状态检查和自动化测试。各次增量见文末。
 
 ## 1. 先了解这几点
 
 - 项目是外卖管理系统的初始骨架，后端名称为“苍穹外卖”；前端页面标题/manifest 仍有“瑞吉外卖”，是同一份管理端资源。
 - 后端为 Java 17、Spring Boot 2.7.3、Maven 三模块工程，根 POM 在 `backend/sky-take-out/pom.xml`，不是仓库根目录。
-- **目前业务实现只有员工管理和分类管理：员工为登录、退出、分页查询、新增、编辑、启用/禁用和按 id 回显；分类为新增、分页查询、删除、修改、启用/禁用和按类型查询。** 菜品、套餐、订单等虽然已有 DTO/Entity/VO 和前端页面，但没有对应后端 Controller/Service/Mapper。
+- **目前业务实现只有员工管理、分类管理和文件上传：员工为登录、退出、分页查询、新增、编辑、启用/禁用和按 id 回显；分类为新增、分页查询、删除、修改、启用/禁用和按类型查询；另有通用的文件上传（存本地磁盘，见第 16 节）。** 菜品、套餐、订单等虽然已有 DTO/Entity/VO 和前端页面，但没有对应后端 Controller/Service/Mapper。
 - 前端是 Nginx 配套的已构建管理端，缺少独立 `src/`、`package.json` 和锁文件；不能直接在此执行 `npm install/build`。JS Source Map 内包含部分原始源码，可辅助定位契约。
 - 服务默认端口：Nginx `80`、后端 `8080`、MySQL `3306`。浏览器的 `/api/...` 经 Nginx 转为后端 `/admin/...`。
 - 仓库缺少建表/初始化 SQL、数据库迁移、CI 和容器部署配置；已有员工登录自动化测试。本机已确认存在 employee 表，但其他环境仍需自行准备数据库。
@@ -22,36 +22,39 @@ waimai/
 ├── backend/sky-take-out/
 │   ├── pom.xml                     # 父 POM：模块、Java 版本、依赖版本管理
 │   ├── .gitignore                  # 忽略 target 和 IDE 文件，测试源码可纳入 Git
-│   ├── sky-common/                 # 公共基础代码，29 个 Java 文件
+│   ├── sky-common/                 # 公共基础代码，32 个 Java 文件
 │   │   └── src/main/java/com/sky/
 │   │       ├── constant/           # 消息、状态、JWT claim、初始密码、自动填充常量
 │   │       ├── context/            # BaseContext：ThreadLocal 当前员工 ID
 │   │       ├── enumeration/        # OperationType：INSERT / UPDATE
-│   │       ├── exception/          # BaseException 及业务异常
-│   │       ├── json/               # JacksonObjectMapper（目前未接入 MVC）
-│   │       ├── properties/         # JWT、阿里 OSS、微信配置绑定
+│   │       ├── exception/          # BaseException 及业务异常（含 FileUploadException）
+│   │       ├── json/               # JacksonObjectMapper（目前已接入 MVC）
+│   │       ├── properties/         # JWT、阿里 OSS、微信、本地上传目录配置绑定
 │   │       ├── result/             # Result<T>、PageResult
-│   │       └── utils/              # JWT、HTTP、OSS 上传、微信支付/退款
+│   │       └── utils/              # JWT、HTTP、OSS 上传、本地磁盘上传、微信支付/退款
 │   ├── sky-pojo/                   # 数据模型，49 个 Java 文件
 │   │   └── src/main/java/com/sky/
 │   │       ├── dto/                # 21 个输入/查询模型
 │   │       ├── entity/             # 11 个实体
 │   │       └── vo/                 # 17 个响应/统计模型
-│   └── sky-server/                 # 可运行服务，18 个主源码 Java 文件
+│   └── sky-server/                 # 可运行服务，20 个主源码 Java 文件
 │       ├── src/main/java/com/sky/
 │       │   ├── SkyApplication.java
 │       │   ├── annotation/AutoFill.java # 标记需要自动填充公共字段的 mapper 方法
 │       │   ├── aspect/AutoFillAspect.java # 切面：写入创建/修改时间与操作人
-│       │   ├── config/WebMvcConfiguration.java
+│       │   ├── config/WebMvcConfiguration.java # 拦截器、消息转换器、静态资源（含 /uploads/**）
+│       │   ├── config/UploadConfiguration.java # 解析上传目录并构造本地存储工具
 │       │   ├── config/SpringfoxConfiguration.java # Actuator/Swagger 扫描兼容
 │       │   ├── config/PasswordConfiguration.java # BCrypt PasswordEncoder
 │       │   ├── controller/admin/EmployeeController.java
 │       │   ├── controller/admin/CategoryController.java
+│       │   ├── controller/admin/CommonController.java # 文件上传
 │       │   ├── handler/GlobalExceptionHandler.java
 │       │   ├── interceptor/JwtTokenAdminInterceptor.java
 │       │   ├── mapper/             # EmployeeMapper、CategoryMapper、DishMapper、SetmealMapper
 │       │   └── service/            # EmployeeService、CategoryService 及 impl
-│       ├── src/test/java/com/sky/  # 12 个测试类，其中 5 个真实 MySQL 联调需显式启用
+│       ├── src/test/java/com/sky/  # 14 个测试类，其中 5 个真实 MySQL 联调需显式启用
+│       ├── uploads/                # 上传文件落盘目录（运行时数据，不入 Git，启动自动创建）
 │       └── src/main/resources/
 │           ├── application.yml
 │           ├── application-dev.yml
@@ -84,17 +87,18 @@ waimai/
 | 分页 / 文档 | PageHelper 1.3.0、Knife4j 3.0.2（Swagger 2），分页已用于员工分页查询 |
 | 模型/序列化 | Lombok 1.18.20、Jackson；sky-pojo 单独指定 jackson-databind 2.9.2 |
 | 认证 | jjwt 0.9.1，HS256，管理员请求头 `token` |
+| 文件存储 | 本地磁盘：`sky.upload.dir`（默认 `uploads`，相对 sky-server 模块目录解析）→ `sky-server/uploads/`，访问入口是 `/uploads/**` 静态资源映射。阿里 OSS 依赖仍在类路径上但未接入，见第 16 节 |
 | 预置依赖 | Redis、Spring Cache、WebSocket、POI、OSS、微信支付；依赖存在不代表业务已接入。AspectJ（`aspectjweaver` + `aspectjrt`；Spring Boot 的 AOP 自动配置只要类路径上有 `org.aspectj.weaver.Advice` 就会开启，本项目**没有引入 `spring-boot-starter-aop`**）已用于公共字段自动填充，见第 15 节 |
 | 监控 | sky-server 已加入 Actuator 依赖；未自定义监控配置；SpringfoxConfiguration 过滤文档扫描中的 PathPattern 路由，保留实际监控端点 |
 | 前端 | Source Map 显示 Vue、TypeScript、Vue Router、Vuex、Element UI、Axios，另有图表等依赖 |
 
-`application.yml`：后端端口 `8080`，默认 profile `dev`，允许循环引用；Druid JDBC URL 的数据库时区为 `Asia/Shanghai`，使用 UTF-8。日志为 mapper `debug`、service/controller `info`。
+`application.yml`：后端端口 `8080`，默认 profile `dev`，允许循环引用；Druid JDBC URL 的数据库时区为 `Asia/Shanghai`，使用 UTF-8。日志为 mapper `debug`、service/controller `info`。另配置了上传相关项：`sky.upload.dir: uploads`、`spring.servlet.multipart.max-file-size/max-request-size: 10MB`、`server.tomcat.max-swallow-size: 10MB`（三者与 nginx 的 `client_max_body_size` 是一组，缺一处就会失败，见第 16 节）。
 
 `application-dev.yml`：`sky.datasource.*` 定义 `localhost:3306/sky_take_out`、用户 `root` 和本地密码。密码和 JWT 签名密钥应在原配置中查阅，不在本文复制。
 
 `sky.jwt.admin-ttl = 7200000`，即 2 小时。`JwtProperties` 也定义用户端配置字段，但目前 YAML 未配置用户端 JWT，服务端也没有用户端认证实现。
 
-`AliOssProperties`、`WeChatProperties` 分别绑定 `sky.alioss`、`sky.wechat`；当前 YAML 没有这些配置。员工业务不调用它们。Redis 暂无项目专用配置或业务调用。
+`AliOssProperties`、`WeChatProperties` 分别绑定 `sky.alioss`、`sky.wechat`；当前 YAML 没有这些配置。员工业务不调用它们。`UploadProperties` 绑定 `sky.upload`，YAML 里有配置，是唯一一个真正生效的 properties（见第 16 节）。Redis 暂无项目专用配置或业务调用。
 
 ## 4. 已实现接口与请求链路
 
@@ -115,8 +119,11 @@ waimai/
 | PUT | `/admin/category` | JSON：`id`、`type`、`name`、`sort`；改写这三列与修改审计列，不动 `status` | `token` |
 | POST | `/admin/category/status/{status}` | 路径 `status`，Query `id`；启用/禁用分类 | `token` |
 | GET | `/admin/category/list` | Query：`type` 可选；只返回 `status=1` 的分类 | `token` |
+| POST | `/admin/common/upload` | `multipart/form-data`，字段名固定为 `file`；只接受 jpg/jpeg/png，落盘到 `sky-server/uploads/yyyy/MM/dd/<uuid>.<ext>`，返回该文件的相对访问路径 | `token` |
 
 响应统一为 `Result<T>`：`{"code":1,"msg":null,"data":...}`；业务失败由 `GlobalExceptionHandler` 捕获 `BaseException` 并返回 `code=0` 和消息，未设置特殊 HTTP 状态。分页模型是 `{total, records}`，员工分页查询已使用。
+
+**上传接口是这条惯例的唯一例外**：失败返回 4xx（400/413）而不是 200，理由见第 16 节 —— 前端 `el-upload` 只按 HTTP 状态码分流，返回 200 会让 `"null"` 落进 `image` 字段。改动前先读那一节。
 
 登录流程：
 
@@ -136,6 +143,18 @@ waimai/
 ```
 
 `WebMvcConfiguration` 拦截 `/admin/**`，仅排除 `/admin/employee/login`；非 HandlerMethod 放行。缺失、无效、过期、缺少有效 empId 或过期时间的令牌返回 HTTP 401 和 Result.error；有效令牌还会通过 EmployeeMapper.getById 查询数据库，拒绝不存在或未启用的员工。数据库故障不伪装为认证失败。
+
+文件上传是**上传**与**访问**两条独立链路，细节见第 16 节：
+
+```text
+上传：<el-upload> POST /api/common/upload（multipart，带 token）
+       → Nginx /api/ → 后端 /admin/common/upload → 落盘 sky-server/uploads/yyyy/MM/dd/<uuid>.<ext>
+访问：<img src="/uploads/2026/09/23/x.jpg">
+       → Nginx location /uploads/（原样转发，不带 token）
+       → 后端 /uploads/** 静态资源映射 → 磁盘上的同一个文件
+```
+
+两张链路对 nginx 与后端的**运行位置都不敏感**：库里存的是以 `/` 开头的相对路径，换域名、换端口、把整个项目目录搬走都不用改数据或配置。
 
 新增员工由 Service 校验并拷贝 DTO（排除客户端 id），设置启用状态 `1`、默认密码 `123456` 的 BCrypt 哈希。四个审计字段（创建/修改时间、创建/修改人）不在这里设置，由 `AutoFillAspect` 在 mapper 调用前统一写入，见第 15 节。`EmployeeMapper.xml` 执行 INSERT，并通过 `useGeneratedKeys` 回填 ID；接口不返回该实体。
 
@@ -176,7 +195,7 @@ waimai/
 - 审计字段（创建/修改时间、创建/修改人）已由 `AutoFillAspect` 统一填充，业务层不再手动 set；标注了 `@AutoFill` 的 mapper 方法见第 15 节。
 - `SkyApplication` 启用注解事务管理，当前员工方法没有显式 `@Transactional`。
 - `JacksonObjectMapper` 定义日期 `yyyy-MM-dd`、日期时间 `yyyy-MM-dd HH:mm`、时间 `HH:mm:ss`，现已在 `WebMvcConfiguration.extendMessageConverters` 中注册并置于转换器首位。注册前 `LocalDateTime` 被序列化成 `[2026,9,22,14,59]` 数组，与接口文档要求的字符串不符；现在时间字段是 `"2026-09-22 14:59"` 形式的字符串。注意 `DEFAULT_DATE_TIME_FORMAT` 不含秒，需要秒级精度时要同时改这个常量。
-- `JwtUtil` 负责生成/解析令牌；`HttpClientUtil` 提供 GET、表单 POST、JSON POST；`AliOssUtil` 提供上传；`WeChatPayUtil` 提供支付及退款。除 JWT 外，当前业务没有调用这些工具。
+- `JwtUtil` 负责生成/解析令牌；`HttpClientUtil` 提供 GET、表单 POST、JSON POST；`AliOssUtil` 提供 OSS 上传（未接入）；`LocalFileUtil` 提供本地磁盘上传（已接入，见第 16 节）；`WeChatPayUtil` 提供支付及退款。除 JWT 与 `LocalFileUtil` 外，当前业务没有调用这些工具。
 - `WeChatPayUtil` 是组件，调用支付时才读取证书等配置；`AliOssUtil` 没有自动注册 Bean 的配置。接入前需完成配置与调用链。
 
 ## 7. 前端与 Nginx
@@ -189,8 +208,11 @@ waimai/
 | --- | --- |
 | `/` | 本地 `html/sky`，配置有 `try_files ... /index.html` 回退 |
 | `/api/` | `http://127.0.0.1:8080/admin/` |
+| `/uploads/` | `http://127.0.0.1:8080`（`proxy_pass` **不带 URI**，保留 `/uploads` 前缀；写成 `...:8080/` 会剥掉前缀导致全部 404） |
 | `/user/` | `http://127.0.0.1:8080/user/`，后端尚未实现 |
 | `/ws/` | `http://127.0.0.1:8080/ws/`，支持 Upgrade 转发，后端尚未实现 |
+
+`nginx-mac.conf` 的 server 块设了 `client_max_body_size 10m`（默认只有 1m）。前端上传组件允许单张图片 2M，不改这一项的话 1~2M 的图会被 nginx 直接 413，请求根本到不了后端，multipart 限制和异常处理器都不会执行，排查方向会被整个带偏。
 
 `nginx-mac.conf` 使用绝对路径、Homebrew `/opt/homebrew` 目录及 `user cc staff`，迁移机器时需要核对用户名、静态目录、mime.types、日志和 PID 路径。Windows 使用附带 `nginx.exe` 与 `conf/nginx.conf`，后者使用相对静态目录。
 
@@ -201,7 +223,7 @@ waimai/
 - 员工：`PUT /employee/editPassword`（改密）。登录、退出、`GET /employee/page`、`POST /employee`、`PUT /employee`、`GET /employee/{id}`、`POST /employee/status/{status}` 均已实现。
 - 分类、菜品、套餐：`/category/*`、`/dish/*`、`/setmeal/*`。
 - 订单与统计：`/order/*`、`/workspace/*`、`/report/*`。
-- 营业状态与上传：`/shop/status`、`/shop/{status}`、`/common/upload`。
+- 营业状态：`/shop/status`、`/shop/{status}`。（`/common/upload` 已实现，见第 16 节）
 
 这些路径会加 `/api` 前缀并由 Nginx 转为 `/admin`。登录成功后页面仍可能出现接口失败，需先检查对应后端是否存在。
 
@@ -232,7 +254,9 @@ sudo nginx -c /Users/cc/Desktop/waimai/frontend/nginx-mac.conf -s stop
 
 按需选择启动/重载/停止命令，不要整段连续执行。管理端访问 `http://localhost/`；Knife4j 入口为 `http://localhost:8080/doc.html`。若前端改用 8081 等端口，要同时检查上述硬编码 WebSocket 地址。
 
-后续代码修改可先在父工程目录执行 `mvn test` / `mvn package`。默认 `mvn test` 执行 75 项、0 失败，5 个真实 MySQL 联调类按默认配置跳过；用 mock 的类为 `EmployeeLoginTest` 25 项（认证、新增校验、密码哈希）、`EmployeeUpdateTest` 11 项、`AutoFillAspectTest` 9 项（公共字段填充切面本身）、`EmployeeStatusTest` 7 项、`EmployeePageQueryTest` 7 项、`GlobalExceptionHandlerTest` 7 项、`EmployeeGetByIdTest` 4 项。显式启用的联调类为 `EmployeeDatabaseTest`、`EmployeePageQueryDatabaseTest`、`EmployeeStatusDatabaseTest`、`EmployeeUpdateDatabaseTest`、`CategoryDatabaseTest`，测试数据在事务结束后回滚。`SKY_DB_TESTS=true` 下共 85 项全部通过。测试源码已纳入 Git（`.gitignore` 中针对测试的忽略规则已移除）。
+后续代码修改可先在父工程目录执行 `mvn test` / `mvn package`。默认 `mvn test` 执行 87 项、0 失败、5 项跳过（5 个真实 MySQL 联调类按默认配置跳过）；用 mock 的类为 `EmployeeLoginTest` 25 项（认证、新增校验、密码哈希）、`EmployeeUpdateTest` 11 项、`AutoFillAspectTest` 9 项（公共字段填充切面本身）、`EmployeeStatusTest` 7 项、`EmployeePageQueryTest` 7 项、`GlobalExceptionHandlerTest` 7 项、`CommonUploadTest` 6 项（上传接口）、`LocalFileUtilTest` 6 项（上传目录解析与路径拼接）、`EmployeeGetByIdTest` 4 项。显式启用的联调类为 `EmployeeDatabaseTest`、`EmployeePageQueryDatabaseTest`、`EmployeeStatusDatabaseTest`、`EmployeeUpdateDatabaseTest`、`CategoryDatabaseTest`，测试数据在事务结束后回滚。`SKY_DB_TESTS=true` 下共 97 项全部通过。测试源码已纳入 Git（`.gitignore` 中针对测试的忽略规则已移除）。
+
+只跑 sky-server 时用 `mvn -pl sky-server -am test`，**不要省掉 `-am`**：省掉后 sky-common 取自本地仓库里的旧构件，改过 sky-common（如新增 `FileUploadException`）就会出现一堆 `NoClassDefFoundError`，看起来像代码坏了，其实只是没重新构建依赖模块。
 
 ## 9. 后续快速恢复上下文
 
@@ -242,7 +266,8 @@ sudo nginx -c /Users/cc/Desktop/waimai/frontend/nginx-mac.conf -s stop
 4. 认证问题查看 `WebMvcConfiguration`、`JwtTokenAdminInterceptor`、`JwtUtil`、`BaseContext` 与 `sky.jwt`。
 5. 数据库问题查看两份 application YAML、Mapper SQL；不要编辑 `target/classes` 下的配置副本。
 6. 页面/API 问题先区分 `80` 端口的 `/api` 与 `8080` 端口的 `/admin`，再查看 Nginx 配置和 Source Map。
-7. 每次功能或结构变化后同步更新本文，尤其是已实现接口、运行步骤和未实现内容。
+7. 图片不显示按顺序查：库里 `image` 列是不是 `/uploads/...`（以 `/` 开头的相对路径）→ 启动日志里"文件上传目录"那一行的绝对路径下有没有这个文件 → 分别请求 `http://localhost:8080/uploads/...`（应为 200 + `image/png`）和 `http://localhost/uploads/...`。**注意前者的状态码骗不了人、后者会骗人**：nginx 没 reload 时 `/uploads/` 会落到 `location /` 的 `try_files` 回退，返回 **200 但 Content-Type 是 `text/html`（内容是 index.html）**，只看状态码会以为是好的。用 `curl -sI` 比 `%{http_code}`，或直接看 `content_type`。
+8. 每次功能或结构变化后同步更新本文，尤其是已实现接口、运行步骤和未实现内容。
 
 当前 Git 分支为 `master`，最近一次提交为「员工管理页面所有功能完成」，内容包含员工全部接口代码、`PasswordConfiguration` 与 `SpringfoxConfiguration` 两个配置类、全部测试类、根 `.gitignore` 与本文。是否还有未提交改动一律以 `git status --short` 为准 —— 本文与代码同属一次提交，写字当下就有新的改动，在这里断言“工作区干净”只会立刻过期，提交哈希同理，需要时以 `git log` 为准。更早的骨架提交为「苍穹外卖初始代码」。根 `.gitignore` 忽略 `.DS_Store` 与 nginx 的 `logs/`、`temp/`；`.idea/` 交给 `.idea/.gitignore` 处理，工程配置是有意保留在 Git 中的。
 
@@ -342,3 +367,53 @@ env JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home SKY
 - 切面是否真的织入 mapper 代理，是 mock 测试证明不了的（mock 掉 mapper 就绕过了整个代理）：`AutoFillAspectTest` 9 项只覆盖切面逻辑本身，端到端由 `EmployeeDatabaseTest`（新增）、`EmployeeStatusDatabaseTest` 与 `EmployeeUpdateDatabaseTest`（修改）、`CategoryDatabaseTest` 4 项（分类新增、修改、启用禁用，以及无登录上下文时不清空修改人）保证 —— 这些用例断言的是库里的真实列值，而业务层已经不再写这些列。
 - 改动文件：实现 `aspect/AutoFillAspect`、给两个 Mapper 的四个方法加注解、新增 `AutoFillAspectTest` 与 `CategoryDatabaseTest`；`EmployeeServiceImpl` 与 `CategoryServiceImpl` 删除共 12 行手动填充（`LocalDateTime`、`BaseContext` 的 import 随之移除）；`EmployeeLoginTest`、`EmployeeUpdateTest`、`EmployeeStatusTest` 里“业务层填写审计字段”的断言改为断言业务层**不碰**这些字段。
 - 已知未处理项：分类的启用/禁用（`CategoryServiceImpl.startOrStop`）没有像员工那样校验 `status` 只能是 0/1，传其他值会直接写进 `status` 列；接口文档未要求，需要时可补校验。
+
+
+## 16. 文件上传（本地磁盘存储，2026-09-23）
+
+`POST /admin/common/upload` 按接口文档实现，但存储由教程的阿里云 OSS 换成**本地磁盘 + 相对路径**：库与页面里存的是 `/uploads/...` 这种以 `/` 开头的路径，项目整体搬到哪都不用改配置或数据。
+
+- 请求：`Content-Type: multipart/form-data`，Body 字段名必须正好是 `file`（前端 `el-upload` 没覆写 `name`，用默认的 `'file'`）；沿用管理员 `token` 请求头。响应 `Result<String>`，`data` 形如 `/uploads/2026/09/23/<uuid>.png`。
+- 落盘位置：`sky-server/uploads/yyyy/MM/dd/<uuid>.<扩展名>`。存储名重新生成为 UUID，**客户端文件名从不参与路径构造**，所以 `../../evil.jpg` 这类名字会被正常接受并重命名 —— 这里不存在"路径穿越"需要另外做 `..` 字符串过滤。UUID 命名同时充当缓存失效策略（同名覆盖不再发生，换图必然换 URL）。
+- 目录放在**模块根目录、与 `target/` 平级**，绝不能放 `target/` 里：`mvn clean` 会把用户上传的图片一起清掉。
+- 目录锚点规则（`UploadConfiguration.localFileUtil()`）：
+  - `application.yml` 里 `sky.upload.dir: uploads` 是相对路径，刻意不出现绝对路径。
+  - 解析：由 `SkyApplication` 的 CodeSource 位置**向上取两级**得到模块目录（IDEA 与 `mvn spring-boot:run` 下是 `sky-server/target/classes/`，打成可执行 jar 后是 `sky-server/target/xxx.jar`，两种情况祖父目录都是模块目录），再用"该目录下存在 `pom.xml`"**校验**；校验不过或探测异常则回退 `System.getProperty("user.dir")` 并打 WARN。配成绝对路径则原样使用（不做校验）。
+  - 用固定两级而不是"向上遍历找 `pom.xml`"：无界遍历在"家目录下碰巧有 `pom.xml`"时会静默把上传目录建到别处，比启动失败难查得多。启动日志会打「解析后的绝对路径 + 配置值 + 基准目录」，查"文件到底存哪了"看这一行。
+  - 打包成 Boot 可执行 jar 后类加载地址是嵌套形式 `jar:file:/...!/BOOT-INF/classes!/`，**不能**用 `Paths.get(URI)` 直接打开（抛 `FileSystemNotFoundException`，表现为应用起不来），代码里退化到字符串截取第一个 `!` 之前的 jar 路径。
+  - 启动时 `Files.createDirectories` 建好目录：静态资源映射指向不存在的目录不会报错，只会让所有图片 404。
+- 访问链路：`/uploads/**` 由 `WebMvcConfiguration.addUploadResourceHandler` 映射到该目录。**该类继承 `WebMvcConfigurationSupport`，Boot 的默认静态资源配置已整体退避**，`spring.web.resources.*` / `spring.mvc.static-path-pattern` 配了既不生效也不报错，换目录只能改 `sky.upload.dir` 或那段代码。
+- `/uploads/**` **必须留在 JWT 拦截器范围外**（拦截器只注册在 `/admin/**`）：`<img src>` 发出的请求带不上 `token`，把它加进拦截器会让全站图片立刻全裂。该端点匿名可读，所以另挂了一个 `PathResourceResolver` 子类做目录围栏 —— 解析结果 `normalize()` 后必须仍在上传目录内，不依赖框架自身的路径规范化行为。
+- **返回值是持久化契约**：`/uploads` 这个前缀定了就不能再改。它以 `/` 开头、由浏览器按当前站点（`http://localhost`）解析，所以库里存的值与域名、端口、项目绝对路径全部解耦。若将来必须改前缀，要同时迁移 `dish.image`、`setmeal.image`、`employee.image` 等列中的既有值。
+- **失败返回 4xx，而不是项目惯例的「HTTP 200 + `code:0`」**，这是有意偏离，也是本文最容易被后人"修回去"的一处：前端 `el-upload` 的 XHR 只按状态码分流（`if (status < 200 || status >= 300) return onError(...)`），2xx 时它**不检查 `code`**、无条件执行 `imageUrl = "".concat(t.data)`。若沿用 200 + `{code:0,data:null}`，字符串 `"null"` 会被存进表单的 `image` 字段，而表单校验 `image: {required: true}` 对非空字符串是通过的，最终 `"null"` 落库：页面破图且控制台没有任何报错。返回 4xx 才会走 `handleError` 弹"图片上传失败"、表单值不变。
+  - `FileUploadException` → 400：空文件、扩展名不在白名单、写盘失败
+  - `MaxUploadSizeExceededException` → 413 + 「上传文件过大，请压缩后重试」（该异常在 handler 匹配之前抛出，但 `doDispatch` 的 try 覆盖它，`@RestControllerAdvice` 能捕获）
+  - `MissingServletRequestPartException`（缺 `file` part）→ 400 + 「上传文件不能为空」；不接会落到 Spring 默认的 400 空 body，不是 `Result` 结构
+- 体量限制是三处配合，少改一处都会以看不懂的形式失败：
+
+  | 位置 | 值 | 不改会怎样 |
+  | --- | --- | --- |
+  | nginx `client_max_body_size`（server 块） | `10m`（默认 1m） | 1~2M 的图被 nginx 直接 413，请求到不了后端，后端配置和异常处理器都不执行，排查方向被整个带偏 |
+  | `spring.servlet.multipart.max-file-size` / `max-request-size` | `10MB` | Boot 默认 1M，而前端组件允许 2M，必然失败 |
+  | `server.tomcat.max-swallow-size` | `10MB` | 超限时 Tomcat 不读完 body 直接断连，客户端只看到 `ERR_CONNECTION_RESET`、拿不到那个 JSON。**不能写 `-1`**：Boot 的 `DataSize` 不接受负数，应用起不来 |
+
+- 只按扩展名白名单（`jpg`/`jpeg`/`png`，比较前转小写 —— macOS 上 `.JPG` 很常见）过滤，**不嗅探文件内容**。上传目录是运行时数据，**不入 Git**（`backend/sky-take-out/.gitignore` 的 `sky-server/uploads/`），启动时自动创建，因此不需要 `.gitkeep`。
+- 改动文件：新增 `sky-common` 的 `exception/FileUploadException`、`properties/UploadProperties`、`utils/LocalFileUtil` 与 `sky-server` 的 `config/UploadConfiguration`，填充已有的 `controller/admin/CommonController` 空壳；修改 `MessageConstant`（补三条提示）、`WebMvcConfiguration`、`GlobalExceptionHandler`、`application.yml`、`frontend/nginx-mac.conf`、`backend/sky-take-out/.gitignore`；新增测试 `CommonUploadTest` 6 项、`LocalFileUtilTest` 6 项（都不连数据库，默认 `mvn test` 就会跑）。测试总数由 75 项变为 87 项，`SKY_DB_TESTS=true` 下 97 项。
+- 测试重点：成功用例断言返回路径匹配 `^/uploads/\d{4}/\d{2}/\d{2}/<uuid>\.(jpg|jpeg|png)$`，且磁盘上确实存在该文件、字节与上传一致（不要断言 `$.msg` 不存在 —— 它存在且为 null）；`../../evil.jpg` 断言的是"**文件名不影响落盘位置**"而不是"路径穿越被拒绝"，后者会诱导实现去做多余且脆弱的 `..` 字符串检查；空文件与 `evil.sh` 断言 `is4xxClientError()`，方法名写明理由，专门守住上面那条"防 `"null"` 落库"的回归。`LocalFileUtilTest` 覆盖锚点校验与回退、绝对路径直通、`fileLocation` 尾部斜杠（`toUri()` 只在目录此刻已存在时才补 `/`，静态资源位置缺了它会出现"冷启动 404、重启一次自愈"）、URL 用 `/` 拼接（仓库自带 `nginx.exe`，Windows 是明确部署场景，用 `File.separator` 会拼出反斜杠导致 404）。
+- **改完 `nginx-mac.conf` 必须 `-s reload`**，否则新加的 `location /uploads/` 不生效。而且这个失败很隐蔽：请求会落到 `location /` 的 `try_files` 回退，返回 **200 但 Content-Type 是 `text/html`**（body 是 `index.html`），只看状态码像是成功的，浏览器里则是图片全裂。
+- 联调实测（后端已全部验证过；**nginx 段尚未验证**，见下条）：`POST http://localhost/api/common/upload` 返回 `{"code":1,"msg":null,"data":"/uploads/2026/09/23/<uuid>.png"}`；`GET http://127.0.0.1:8080/uploads/...` → 200 + `image/png`；无 token → 401；`.sh` → 400；空文件 → 400 + 「上传文件不能为空」；12MB → 413 且响应体是那个 JSON；缺 `file` part → 400；穿越探针 `/uploads/../../../etc/passwd` 与 `/uploads/%2e%2e%2f...` → 400，`/uploads//etc/passwd` → 404；`/uploads/` 目录本身 → 404。
+- **nginx 段待办**：`location /uploads/` 已经写进 `nginx-mac.conf`，但本机 nginx master 的启动时间早于该改动，**还没 reload**，所以此刻 `http://localhost/uploads/...` 实际返回的是 `index.html`（200 + `text/html`，见上面那条隐蔽失败）。执行下面这条后，才可以说是全链路打通：
+
+  ```sh
+  sudo nginx -c /Users/cc/Desktop/waimai/frontend/nginx-mac.conf -t && \
+  sudo nginx -c /Users/cc/Desktop/waimai/frontend/nginx-mac.conf -s reload
+  curl -sI http://localhost/uploads/2026/09/23/b40b9548-acc7-4dd2-ab0d-ba2b2920b6c4.png | head -3
+  ```
+
+- 当前运行态（本次快照）：后端 jar 以 PID 11638 运行，PID 文件 `/tmp/waimai-upload-server.pid`、日志 `/tmp/waimai-upload-server.log`。进程号是快照，后续操作前重新确认；改用 IDEA 启动前先停掉这个 jar，否则 8080 端口冲突。
+- 已知未处理项：
+  - `/uploads/**` **匿名可读**，猜到 UUID 就能取到图片。这是有意取舍（`<img src>` 带不上 token），UUID 不可枚举，但不要把它当成访问控制。
+  - 库里 `dish.image` 仍有本次改造之前留下的 24 条阿里云 OSS 绝对 URL，本次**没有迁移**（外链还能正常显示）。写清理逻辑时注意不要用"删除所有非 `/uploads` 前缀的文件"这类判断，那会漏掉它们；断网或 OSS 侧清理后这些图会失效。
+  - 上传文件只增不减：没有清理、配额、审计日志，也不在任何备份范围内（它不在 Git 里）。
+  - 只按扩展名过滤，伪装成 `.png` 的非图片会被接受并原样存盘。
+  - 单独把 jar 拷到别处运行（不在 Maven 模块目录下）时锚点校验不过，目录会落在启动时的工作目录并按 `user.dir` 解析，想固定就显式配绝对路径。

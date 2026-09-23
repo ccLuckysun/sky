@@ -23,6 +23,9 @@ public class MessageConstant {
     public static final String ADDRESS_BOOK_IS_NULL = "用户地址为空，不能下单";
     public static final String LOGIN_FAILED = "登录失败";
     public static final String UPLOAD_FAILED = "文件上传失败";
+    public static final String UPLOAD_FILE_EMPTY = "上传文件不能为空";
+    public static final String UPLOAD_TYPE_NOT_ALLOWED = "仅支持 jpg、jpeg、png 格式的图片";
+    public static final String UPLOAD_SIZE_EXCEEDED = "上传文件过大，请压缩后重试";
     public static final String SETMEAL_ENABLE_FAILED = "套餐内包含未启售菜品，无法启售";
     public static final String PASSWORD_EDIT_FAILED = "密码修改失败";
     public static final String DISH_ON_SALE = "起售中的菜品不能删除";
