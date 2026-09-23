@@ -14,6 +14,7 @@ import com.sky.mapper.CategoryMapper;
 import com.sky.mapper.DishFlavorMapper;
 import com.sky.mapper.DishMapper;
 import com.sky.mapper.EmployeeMapper;
+import com.sky.mapper.SetmealMapper;
 import com.sky.properties.JwtProperties;
 import com.sky.service.impl.DishServiceImpl;
 import com.sky.utils.JwtUtil;
@@ -85,6 +86,7 @@ class DishUpdateTest {
     private DishMapper dishMapper;
     private DishFlavorMapper dishFlavorMapper;
     private CategoryMapper categoryMapper;
+    private SetmealMapper setmealMapper;
     private LocalFileUtil localFileUtil;
     private MockMvc mvc;
     private final ObjectMapper json = new ObjectMapper();
@@ -94,6 +96,10 @@ class DishUpdateTest {
         dishMapper = mock(DishMapper.class);
         dishFlavorMapper = mock(DishFlavorMapper.class);
         categoryMapper = mock(CategoryMapper.class);
+        //回滚删图前要查"这张图还有没有人在用"，其中一条就是套餐（见 DishServiceImpl#isImageInUse）。
+        //漏注入会让那次查询 NPE，而 NPE 会被清理逻辑的 catch-all 吞掉，表现是
+        //"图没被删"而不是测试报错，非常难查。
+        setmealMapper = mock(SetmealMapper.class);
         //上传工具用 mock：本类的重点是"什么时候删图"（要断言调没调用过），
         //真实的磁盘行为由 DishSaveTest 与 DishImageRollbackDatabaseTest 覆盖
         localFileUtil = mock(LocalFileUtil.class);
@@ -110,6 +116,7 @@ class DishUpdateTest {
         ReflectionTestUtils.setField(service, "dishMapper", dishMapper);
         ReflectionTestUtils.setField(service, "dishFlavorMapper", dishFlavorMapper);
         ReflectionTestUtils.setField(service, "categoryMapper", categoryMapper);
+        ReflectionTestUtils.setField(service, "setmealMapper", setmealMapper);
         ReflectionTestUtils.setField(service, "localFileUtil", localFileUtil);
 
         JwtProperties properties = new JwtProperties();

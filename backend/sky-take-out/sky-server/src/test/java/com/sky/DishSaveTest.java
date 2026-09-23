@@ -14,6 +14,7 @@ import com.sky.mapper.CategoryMapper;
 import com.sky.mapper.DishFlavorMapper;
 import com.sky.mapper.DishMapper;
 import com.sky.mapper.EmployeeMapper;
+import com.sky.mapper.SetmealMapper;
 import com.sky.properties.JwtProperties;
 import com.sky.service.impl.DishServiceImpl;
 import com.sky.utils.JwtUtil;
@@ -67,6 +68,7 @@ class DishSaveTest {
     private DishMapper dishMapper;
     private DishFlavorMapper dishFlavorMapper;
     private CategoryMapper categoryMapper;
+    private SetmealMapper setmealMapper;
     private EmployeeMapper employeeMapper;
     private MockMvc mvc;
     private final ObjectMapper json = new ObjectMapper();
@@ -79,6 +81,10 @@ class DishSaveTest {
         dishMapper = mock(DishMapper.class);
         dishFlavorMapper = mock(DishFlavorMapper.class);
         categoryMapper = mock(CategoryMapper.class);
+        //回滚删图前要查"这张图还有没有人在用"，其中一条就是套餐（见 DishServiceImpl#isImageInUse）。
+        //哪怕本类只测新增，这个协作者也必须注入：漏了它会在那个 catch-all 里变成一条被吞掉的
+        //NullPointerException，表现是"图没被删"而不是测试报错，很难查。
+        setmealMapper = mock(SetmealMapper.class);
         employeeMapper = mock(EmployeeMapper.class);
 
         //上传工具用真实的实现配临时目录，只 mock mapper：图片的存不存在、删没删、路径越没越界
@@ -90,6 +96,7 @@ class DishSaveTest {
         ReflectionTestUtils.setField(service, "dishMapper", dishMapper);
         ReflectionTestUtils.setField(service, "dishFlavorMapper", dishFlavorMapper);
         ReflectionTestUtils.setField(service, "categoryMapper", categoryMapper);
+        ReflectionTestUtils.setField(service, "setmealMapper", setmealMapper);
         ReflectionTestUtils.setField(service, "localFileUtil", localFileUtil);
 
         JwtProperties properties = new JwtProperties();
@@ -186,6 +193,43 @@ class DishSaveTest {
     private void assertNothingWasWritten() {
         verify(dishMapper, never()).insert(any(Dish.class));
         verify(dishFlavorMapper, never()).insertBatch(any());
+    }
+
+    /**
+     * 菜名与口味名入库前要去掉两端空白。
+     * <p>
+     * 不做这一步，" 鱼" 与 "鱼" 就是两行不同记录：{@code dish.name} 的排序规则是
+     * {@code utf8mb3_bin}（PAD SPACE），**只忽略尾随空格、区分前导空格**，唯一索引拦不住它。
+     * 管理端列表里于是出现两条一模一样的菜，而查询路径是 trim 过的，搜"鱼"两条都命中。
+     */
+    @Test
+    void trimsSurroundingWhitespaceFromNamesBeforeStoring() throws Exception {
+        stubInsertReturnsGeneratedId();
+
+        JsonNode response = json(imageBackInPlaceThenSave(payload("{\"name\":\"  测试菜品  \",\"categoryId\":11,"
+                + "\"price\":\"12.50\",\"image\":\"" + IMAGE + "\",\"description\":\"描述\",\"status\":0,"
+                + "\"flavors\":[{\"name\":\"  甜味 \",\"value\":\"[\\\"无糖\\\"]\"}]}")));
+
+        assertEquals(1, response.path("code").asInt(), "两侧带空白的名字本应照常接受：" + response);
+
+        //入库的是去掉两端空白之后的值，重复的菜名这才真的撞得上唯一索引
+        assertEquals("测试菜品", captureInsertedDish().getName());
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<DishFlavor>> flavors = ArgumentCaptor.forClass(List.class);
+        verify(dishFlavorMapper).insertBatch(flavors.capture());
+        assertEquals("甜味", flavors.getValue().get(0).getName(), "口味名同样要去空白");
+    }
+
+    /** 去掉空白后变成空串的名字照旧被拒——trim 不是"把非法输入洗成合法输入"。 */
+    @Test
+    void stillRejectsANameThatIsBlankAfterTrimming() throws Exception {
+        JsonNode response = json(imageBackInPlaceThenSave(payload("{\"name\":\"   \",\"categoryId\":11,"
+                + "\"price\":\"12.50\",\"image\":\"" + IMAGE + "\",\"status\":0}")));
+
+        assertEquals(0, response.path("code").asInt());
+        assertEquals("菜品名称不能为空", response.path("msg").asText());
+        assertNothingWasWritten();
     }
 
     @Test

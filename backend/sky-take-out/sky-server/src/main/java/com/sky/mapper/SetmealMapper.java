@@ -32,4 +32,21 @@ public interface SetmealMapper {
      */
     Integer countByDishIds(@Param("ids") List<Long> ids);
 
+    /**
+     * 统计有多少个套餐在引用这张图片。
+     * <p>
+     * 与 {@code DishMapper#countByImage} 一起构成"这张图还有没有人在用"的判据，用于删除菜品时
+     * 决定图片文件能不能跟着删。查的是 {@code setmeal.image} 而不是 {@code setmeal_dish}：
+     * 这里问的是"这张图片本身被谁引用"，与菜品关联是两回事。
+     * <p>
+     * 表当前是空的（套餐模块没有后端），所以这条现在恒返回 0；留着是因为一旦套餐开始写本地上传图，
+     * 缺了它就会把套餐正在用的图删掉——这类删除不可逆，宁可多查一次。
+     * <p>
+     * 不能加 @AutoFill：只读的 count 没有审计字段可填。
+     * @param image 图片路径，与 setmeal.image 按字符串全等比较
+     * @return 引用该图片的套餐数量，count 不会返回 null
+     */
+    @Select("select count(id) from setmeal where image = #{image}")
+    int countByImage(String image);
+
 }

@@ -38,6 +38,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -53,8 +54,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 前端契约（从已构建 bundle 的 source map 核对）：{@code deleteDish(ids)} 把 ids 拼成逗号分隔的字符串
  * 放在查询串上，单条删除走同一个接口、值是单个 id，调用方只判 {@code res.code === 1}。
  * <p>
- * 用 Mock 替换四个 mapper，重点覆盖三件 mock 之外证明不了的事：解析在任何一次 mapper 调用之前完成、
- * 两条守卫的固定顺序、以及删子表早于删主表。
+ * 用 Mock 替换四个 mapper，重点覆盖几件 mock 之外证明不了的事：解析在任何一次 mapper 调用之前完成、
+ * 两条守卫的固定顺序、删子表早于删主表、以及图片清理的四条判据（删除前先读图片、提交后才删、
+ * 还有人用就不删、清理失败不影响已经提交的删除）。
+ * <p>
+ * 本类<b>没有 Spring 事务</b>（service 直接 new 出来），所以走的是清理逻辑的退化分支"删完表就地删"，
+ * 等不到 {@code afterCommit} 回调；真正走回调的那条由 {@code DishDeleteImageDatabaseTest} 用真库覆盖。
  */
 class DishDeleteTest {
 
@@ -73,8 +78,14 @@ class DishDeleteTest {
         dishMapper = mock(DishMapper.class);
         dishFlavorMapper = mock(DishFlavorMapper.class);
         setmealMapper = mock(SetmealMapper.class);
-        //删除接口不该碰文件系统（不删图片）。用 mock 才能断言"一次都没调用过"。
+        //删除接口对文件系统只做两件事：判断是不是本地上传路径、以及删除。用 mock 才能断言
+        //"某条路径一次都没被删过"这种否定性的结论。
         localFileUtil = mock(LocalFileUtil.class);
+        //isLocalPath 按真实实现的分支答：只有 /uploads/ 开头的值才当本地文件处理。
+        //anyString() 不匹配 null，所以 image 为 null 时自然返回 false，与真实实现一致。
+        when(localFileUtil.isLocalPath(anyString()))
+                .thenAnswer(invocation -> invocation.getArgument(0, String.class)
+                        .startsWith(LocalFileUtil.URL_PREFIX + "/"));
         EmployeeMapper employeeMapper = mock(EmployeeMapper.class);
         when(employeeMapper.getById(OPERATOR_ID))
                 .thenReturn(Employee.builder().id(OPERATOR_ID).username("admin").status(1).build());
@@ -299,15 +310,159 @@ class DishDeleteTest {
         verify(dishMapper).deleteByIds(List.of(999999L));
     }
 
+    /**
+     * 图片路径必须在删除之前读出来：行一旦删掉，就再也查不出这些菜品引用过哪些图片，
+     * 那些文件也就永远清不掉了。
+     */
     @Test
-    void neverDeletesUploadedImageFiles() throws Exception {
+    void readsTheImagesBeforeDeletingTheRows() throws Exception {
         stubNoGuardHit();
+        when(dishMapper.listImagesByIds(any())).thenReturn(List.of());
 
         assertEquals(1, body(call("1,2")).path("code").asInt());
 
-        //有意不删图片：库里存量图片是 OSS 绝对地址，删文件不可逆，而"还有没有人在用"的判据
-        //目前只看 dish 表，误删风险大于收益。删除菜品不该碰本地文件系统。
+        InOrder order = inOrder(dishMapper, dishFlavorMapper);
+        order.verify(dishMapper).countOnSaleByIds(List.of(1L, 2L));
+        order.verify(dishMapper).listImagesByIds(List.of(1L, 2L));
+        order.verify(dishFlavorMapper).deleteByDishIds(List.of(1L, 2L));
+        order.verify(dishMapper).deleteByIds(List.of(1L, 2L));
+    }
+
+    /**
+     * 没人再用的本地图片要跟着删掉。
+     * <p>
+     * 本类没有 Spring 事务（service 是直接 new 出来的），等不到 {@code afterCommit} 回调，
+     * 清理逻辑因此退化成"删完表就地删"——这正是这条 mock 路径唯一能覆盖到的分支。
+     * 真正走回调的那条由 {@code DishDeleteImageDatabaseTest} 用真库覆盖。
+     */
+    @Test
+    void deletesALocalImageThatNoOneUsesAnyMore() throws Exception {
+        stubNoGuardHit();
+        String image = "/uploads/2026/09/23/gone.png";
+        when(dishMapper.listImagesByIds(any())).thenReturn(List.of(image));
+        when(dishMapper.countByImage(image)).thenReturn(0);
+        when(setmealMapper.countByImage(image)).thenReturn(0);
+
+        assertEquals(1, body(call("1,2")).path("code").asInt());
+
+        //顺序也钉住了：先删表、再删文件。反过来的话删表失败会留下一行指着不存在图片的菜品。
+        InOrder order = inOrder(dishMapper, localFileUtil);
+        order.verify(dishMapper).deleteByIds(List.of(1L, 2L));
+        order.verify(localFileUtil).delete(image);
+    }
+
+    /** 别的菜品还在用同一张图时不能删。客户端完全可以给多道菜填同一个 image 路径。 */
+    @Test
+    void keepsAnImageThatAnotherDishStillUses() throws Exception {
+        stubNoGuardHit();
+        String shared = "/uploads/2026/09/23/shared.png";
+        when(dishMapper.listImagesByIds(any())).thenReturn(List.of(shared));
+        when(dishMapper.countByImage(shared)).thenReturn(1);
+
+        assertEquals(1, body(call("1,2")).path("code").asInt());
+
+        verify(localFileUtil, never()).delete(any());
+    }
+
+    /**
+     * 套餐侧也在"还有没有人在用"的判据里——这是本轮新增的一条。
+     * <p>
+     * {@code setmeal.image} 与 {@code dish.image} 是同一类引用，漏了它会把套餐正在用的图删掉，
+     * 而且删文件不可逆。表当前是空的，所以这条现在只能靠 mock 守住。
+     */
+    @Test
+    void keepsAnImageThatASetmealStillUses() throws Exception {
+        stubNoGuardHit();
+        String image = "/uploads/2026/09/23/setmeal.png";
+        when(dishMapper.listImagesByIds(any())).thenReturn(List.of(image));
+        when(dishMapper.countByImage(image)).thenReturn(0);
+        when(setmealMapper.countByImage(image)).thenReturn(1);
+
+        assertEquals(1, body(call("1,2")).path("code").asInt());
+
+        verify(localFileUtil, never()).delete(any());
+    }
+
+    /** OSS 绝对地址不是本地文件：既不能拿去删，也不必去问"有没有人在用"。 */
+    @Test
+    void leavesOssUrlsAlone() throws Exception {
+        stubNoGuardHit();
+        String oss = "https://sky-itcast.oss-cn-hangzhou.aliyuncs.com/legacy.png";
+        when(dishMapper.listImagesByIds(any())).thenReturn(List.of(oss));
+
+        assertEquals(1, body(call("1,2")).path("code").asInt());
+
+        verify(localFileUtil, never()).delete(any());
+        verify(dishMapper, never()).countByImage(any());
+        verify(setmealMapper, never()).countByImage(any());
+    }
+
+    /**
+     * 被守卫拒掉时一张图都不能删。
+     * <p>
+     * 这是本次改动最要紧的对称性：删除的清理必须挂在<b>提交成功</b>上（回滚意味着菜品还在，
+     * 图就必须还在），而新增的清理挂在<b>回滚</b>上。挂反了的话，一次被拒的删除会把菜品正在用的图删掉。
+     * 守卫在注册回调之前，所以这里连图片都不该去查。
+     */
+    @Test
+    void keepsEveryImageWhenTheDeleteIsRefused() throws Exception {
+        when(dishMapper.countOnSaleByIds(any())).thenReturn(1);
+
+        assertEquals(0, body(call("1,2")).path("code").asInt());
+
+        verify(dishMapper, never()).listImagesByIds(any());
         verifyNoInteractions(localFileUtil);
+    }
+
+    /**
+     * 清理失败不能把一次已经成功的删除变成错误。
+     * <p>
+     * 清理跑在事务完成回调里，那时数据库已经提交了；此刻抛出去只会让前端看到"删除失败"
+     * 而库里其实已经删了。所以 {@code deleteUploadedImage} 兜住一切异常，
+     * 而且单张失败不影响后面的。
+     */
+    @Test
+    void keepsGoingWhenOneImageFailsToDelete() throws Exception {
+        stubNoGuardHit();
+        String broken = "/uploads/2026/09/23/broken.png";
+        String fine = "/uploads/2026/09/23/fine.png";
+        when(dishMapper.listImagesByIds(any())).thenReturn(List.of(broken, fine));
+        when(dishMapper.countByImage(any())).thenReturn(0);
+        when(localFileUtil.delete(broken)).thenThrow(new RuntimeException("磁盘故障"));
+
+        JsonNode response = body(call("1,2"));
+
+        assertEquals(1, response.path("code").asInt(), "行已经删掉了，响应不该因为清理失败而变错误");
+        verify(localFileUtil).delete(fine);
+    }
+
+    /**
+     * 连"这是不是本地上传路径"这一步抛异常也不能漏出去。
+     * <p>
+     * 守的是 {@code deleteUploadedImage} 那句"整个过程不抛异常"的保证，而它**不是**靠调用方兜的：
+     * Spring 的 {@code invokeAfterCompletion} 会捕获回调里的 Throwable 只记日志，
+     * 但 {@code invokeAfterCommit} <b>不捕获</b>。所以那句守卫若漏在 try 之外，删除路径上一旦它抛，
+     * 异常会冒出 {@code commit()}，把一次已经提交成功的删除变成 500；退化分支里会顶掉原始的业务异常；
+     * 循环也会中断，后面所有图片都不再清理。
+     * <p>
+     * 当前实现够不到（{@code isLocalPath} 只是两次字符串判断、{@code image} 永不为 null），
+     * 所以这里用 mock 强行让它抛，把这个契约钉住——将来谁把守卫挪回 try 外面，这条会立刻变红。
+     */
+    @Test
+    void keepsTheResponseSuccessfulEvenWhenTheLocalPathCheckItselfThrows() throws Exception {
+        stubNoGuardHit();
+        String broken = "/uploads/2026/09/23/broken.png";
+        String fine = "/uploads/2026/09/23/fine.png";
+        when(dishMapper.listImagesByIds(any())).thenReturn(List.of(broken, fine));
+        when(dishMapper.countByImage(any())).thenReturn(0);
+        //比 setUp 里那条 anyString() 的桩更具体，Mockito 取最后声明的那条
+        when(localFileUtil.isLocalPath(broken)).thenThrow(new RuntimeException("路径判断炸了"));
+
+        JsonNode response = body(call("1,2"));
+
+        assertEquals(1, response.path("code").asInt(), "行已经删掉了，响应不该因为清理失败而变错误");
+        //这一张失败不影响后面那张，"不抛异常"的保证覆盖到整个方法体
+        verify(localFileUtil).delete(fine);
     }
 
     @Test

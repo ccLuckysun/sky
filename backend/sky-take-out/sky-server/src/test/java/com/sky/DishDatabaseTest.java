@@ -178,6 +178,41 @@ class DishDatabaseTest {
         assertEquals(2, jdbc.queryForObject("select count(*) from dish_flavor where dish_id = ?", Integer.class, dishId));
     }
 
+    /**
+     * 去掉两端空白之后，重复的菜名才真的撞得上唯一索引。
+     * <p>
+     * 这是 trim 存在的理由，也只能在真库上证明：{@code dish.name} 的排序规则是
+     * {@code utf8mb3_bin}（PAD SPACE），**只忽略尾随空格、区分前导空格**，所以在 trim 之前
+     * {@code " name"} 与 {@code "name"} 是两行不同记录，{@code idx_dish_name} 形同虚设。
+     * 修复前这条用例会失败在"第二次新增本应被拒"那一步：它会以 code=1 成功，库里多出一行
+     * 在管理端列表里看起来一模一样的菜。
+     */
+    @Test
+    void treatsAPaddedNameAsTheSameDishAfterTrimming() throws Exception {
+        long categoryId = existingCategoryId();
+        String name = uniqueName("dish");
+
+        save(name, categoryId);
+
+        //第一次入库的就是规范化后的名字
+        assertEquals(name, jdbc.queryForObject("select name from dish where id = ?", String.class, dishIdOf(name)));
+
+        //再拿前端可能发出来的"前后都带空格"的同一个名字新增：trim 后与已有菜名完全相同，
+        //唯一索引必须拦住它（用一张新上传的图，免得与第一道菜在用的图片混在一起）
+        String secondImage = uploadImage();
+        mvc.perform(post("/admin/dish").header("token", adminToken())
+                        .contentType("application/json")
+                        .content(body("  " + name + "  ", categoryId, secondImage)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.msg").value("菜品名称已存在"));
+
+        //库里仍然只有规范化后的那一行，没有多出"带空格的孪生兄弟"
+        assertEquals(1, jdbc.queryForObject("select count(*) from dish where name = ?", Integer.class, name));
+        assertEquals(0, jdbc.queryForObject("select count(*) from dish where name = ?", Integer.class,
+                "  " + name + "  "));
+    }
+
     @Test
     void rejectsCategoryThatDoesNotExistAndWritesNothing() throws Exception {
         String name = uniqueName("dish");

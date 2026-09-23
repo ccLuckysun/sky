@@ -40,6 +40,32 @@
         order by d.update_time desc, d.id desc
     </select>
 
+    <!-- 按条件查询菜品列表（不分页）。供套餐页的选菜组件用：它发 ?categoryId=xx，也发 ?name=xx
+         （关键字搜索那一支）。两个条件都可选、可叠加，都不传就返回全部菜品。
+         **有意不加 d.status = 1 过滤**：选菜组件对 status = 0 的菜显式渲染「停售」标签，
+         而且预置常量 SETMEAL_ENABLE_FAILED「套餐内包含未启售菜品，无法启售」说明停售菜品本就
+         可以先进套餐、由套餐启售时兜底 —— 这里过滤掉会让两者都成为死代码。
+         resultType 用短别名 Dish：type-aliases-package 配的就是 com.sky.entity（DishVO 不行，见 pageQuery）。
+         列清单显式写全：接口文档的响应模型列了 create_time / create_user / update_user，
+         它们只在实体上有，DishVO 里没有，所以这里返回的是实体而不是 VO。
+         order by id 而不是 pageQuery 那套 update_time desc：本接口不分页，不需要"翻页稳定"，
+         只需要一个确定的顺序；按主键排不会因为有人改了某道菜就把列表顺序抖乱，
+         选菜的人一眼扫过去位置是固定的。 -->
+    <select id="list" resultType="Dish">
+        select id, name, category_id, price, image, description, status, create_time, update_time,
+               create_user, update_user
+        from dish
+        <where>
+            <if test="categoryId != null">
+                and category_id = #{categoryId}
+            </if>
+            <if test="name != null and name != ''">
+                and name like concat('%', #{name}, '%')
+            </if>
+        </where>
+        order by id
+    </select>
+
     <!-- 批量删除前的守卫：统计这批 id 里有多少条在起售。status = 1 即 StatusConstant.ENABLE。
          用 count(*) 而不是把行查出来，只需要判断"有没有"；id 不存在的行自然不计入，
          所以"删一个已经被别人删掉的菜品"不会在这里被拒。
@@ -50,6 +76,21 @@
         select count(*)
         from dish
         where status = 1
+        and id in
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </select>
+
+    <!-- 删除菜品前记下这批菜品引用的图片：行删掉之后就再也查不出该清理哪些文件了。
+         两条细节：
+         - `image is not null` 不能省，否则结果里会混进 null，下游要额外判空；
+         - distinct 让共用同一张图的几道菜只产生一条记录，免得对同一个文件重复删。
+         单参数集合必须写 @Param("ids")，XML 这边才认 collection="ids"（同 countOnSaleByIds）。 -->
+    <select id="listImagesByIds" resultType="java.lang.String">
+        select distinct image
+        from dish
+        where image is not null
         and id in
         <foreach collection="ids" item="id" open="(" separator="," close=")">
             #{id}

@@ -7,7 +7,7 @@
 
 - 项目是外卖管理系统的初始骨架，后端名称为“苍穹外卖”；前端页面标题/manifest 仍有“瑞吉外卖”，是同一份管理端资源。
 - 后端为 Java 17、Spring Boot 2.7.3、Maven 三模块工程，根 POM 在 `backend/sky-take-out/pom.xml`，不是仓库根目录。
-- **目前业务实现只有员工管理、分类管理、菜品新增和文件上传：员工为登录、退出、分页查询、新增、编辑、启用/禁用和按 id 回显；分类为新增、分页查询、删除、修改、启用/禁用和按类型查询；菜品为新增、分页查询、按 id 回显、修改与批量删除（新增与修改都在一个事务里同时写 `dish` 与 `dish_flavor` 两张表，见第 17、21 节；分页见第 19 节；删除见第 20 节），**菜品管理页主链路已通，只剩「起售/停售」没做**；另有通用的文件上传（存本地磁盘，见第 16 节）。** 套餐、订单等虽然已有 DTO/Entity/VO 和前端页面，但没有对应后端 Controller/Service/Mapper。
+- **目前业务实现只有员工管理、分类管理、菜品管理和文件上传：员工为登录、退出、分页查询、新增、编辑、启用/禁用和按 id 回显；分类为新增、分页查询、删除、修改、启用/禁用和按类型查询；菜品为新增、分页查询、按 id 回显、修改、批量删除、起售/停售与按分类或名称查列表（新增与修改都在一个事务里同时写 `dish` 与 `dish_flavor` 两张表，见第 17、21 节；分页见第 19 节；删除见第 20 节；起售/停售见第 22 节；列表见第 23 节），**管理端菜品页与套餐页选菜组件的接口都已补齐**；另有通用的文件上传（存本地磁盘，见第 16 节）。** 套餐、订单等虽然已有 DTO/Entity/VO 和前端页面，但没有对应后端 Controller/Service/Mapper。
 - 前端是 Nginx 配套的已构建管理端，缺少独立 `src/`、`package.json` 和锁文件；不能直接在此执行 `npm install/build`。JS Source Map 内包含部分原始源码，可辅助定位契约。
 - 服务默认端口：Nginx `80`、后端 `8080`、MySQL `3306`。浏览器的 `/api/...` 经 Nginx 转为后端 `/admin/...`。
 - 仓库缺少建表/初始化 SQL、数据库迁移、CI 和容器部署配置；已有员工登录自动化测试。本机已确认存在 employee 表，但其他环境仍需自行准备数据库。
@@ -49,12 +49,12 @@ waimai/
 │       │   ├── controller/admin/EmployeeController.java
 │       │   ├── controller/admin/CategoryController.java
 │       │   ├── controller/admin/CommonController.java # 文件上传
-│       │   ├── controller/admin/DishController.java # 菜品新增
+│       │   ├── controller/admin/DishController.java # 菜品管理（增、分页、回显、改、批量删、起售停售）
 │       │   ├── handler/GlobalExceptionHandler.java
 │       │   ├── interceptor/JwtTokenAdminInterceptor.java
 │       │   ├── mapper/             # EmployeeMapper、CategoryMapper、DishMapper、DishFlavorMapper、SetmealMapper
 │       │   └── service/            # EmployeeService、CategoryService、DishService 及 impl
-│       ├── src/test/java/com/sky/  # 16 个测试类，其中 6 个真实 MySQL 联调需显式启用
+│       ├── src/test/java/com/sky/  # 29 个测试类，其中 13 个真实 MySQL 联调需显式启用
 │       ├── uploads/                # 上传文件落盘目录（运行时数据，不入 Git，启动自动创建）
 │       └── src/main/resources/
 │           ├── application.yml
@@ -122,9 +122,11 @@ waimai/
 | GET | `/admin/category/list` | Query：`type` 可选；只返回 `status=1` 的分类 | `token` |
 | POST | `/admin/dish` | JSON：`name`、`categoryId`、`price`、`image` 必填，`description`、`status`、`flavors[]` 可选；在**一个事务里**同时写 `dish` 与 `dish_flavor`，失败时还会把这次请求引用的本地图片一并删掉；`image` 是 `/uploads/...` 时要求文件真的在磁盘上。成功返回空 `data`，详见第 18 节 | `token` |
 | GET | `/admin/dish/page` | Query：`page`、`pageSize` 必填且为正整数，`name`（模糊，两端空白忽略）、`categoryId`、`status` 可选；返回 `{total, records}`，每条记录带 `categoryName` | `token` |
-| DELETE | `/admin/dish` | Query：`ids` 逗号分隔的菜品 id（单条删除也走这个参数）；起售中、被套餐关联的菜品拒绝删除，不存在的 id 视为无操作 | `token` |
+| DELETE | `/admin/dish` | Query：`ids` 逗号分隔的菜品 id（单条删除也走这个参数）；起售中、被套餐关联的菜品拒绝删除，不存在的 id 视为无操作；**提交成功后会清掉不再被引用的本地上传图**（只删 `/uploads/...`，还有人用就不删），详见第 24 节 | `token` |
 | GET | `/admin/dish/{id}` | 编辑页回显：返回菜品详情，`flavors` **一定是数组**（没有口味时是 `[]`，不是 null）；不 join 分类，`categoryName` 为 null；菜品不存在返回 `code:0`「菜品不存在」 | `token` |
 | PUT | `/admin/dish` | JSON：`id`、`name`、`categoryId`、`price`、`image` 必填，`description`、`status`、`flavors[]` 可选；口味是**整组替换**（`flavors` 缺省或为 `[]` 都表示清空口味），口味项回传的 `id`/`dishId` 一律忽略；重名转成「菜品名称已存在」，失败时回滚并删掉本次换上的本地图片，详见第 21 节 | `token` |
+| POST | `/admin/dish/status/{status}` | 路径 `status` 只能为 1 起售 / 0 停售，Query `id` 必填且是**单个**菜品id（多个 id 用逗号拼会在进方法体前 400）；只改 `status` 与两个审计列，不碰图片与口味，详见第 22 节 | `token` |
+| GET | `/admin/dish/list` | Query：`categoryId` 与 `name` **都可选、可叠加**（至少传一个才有意义，都不传返回全部菜品）；**不过滤起售状态**，停售的菜也返回；不分页；返回 `Dish` 实体数组（含 `createTime`/`createUser`/`updateUser`），空结果是 `[]`，详见第 23 节 | `token` |
 | POST | `/admin/common/upload` | `multipart/form-data`，字段名固定为 `file`；只接受 jpg/jpeg/png，落盘到 `sky-server/uploads/yyyy/MM/dd/<uuid>.<ext>`，返回该文件的相对访问路径 | `token` |
 
 响应统一为 `Result<T>`：`{"code":1,"msg":null,"data":...}`；业务失败由 `GlobalExceptionHandler` 捕获 `BaseException` 并返回 `code=0` 和消息，未设置特殊 HTTP 状态。分页模型是 `{total, records}`，员工分页查询已使用。
@@ -235,7 +237,7 @@ waimai/
 前端已有但后端尚缺的典型接口：
 
 - 员工：`PUT /employee/editPassword`（改密）。登录、退出、`GET /employee/page`、`POST /employee`、`PUT /employee`、`GET /employee/{id}`、`POST /employee/status/{status}` 均已实现。
-- 菜品：`GET /dish/page`（列表页，新增成功后 `$router.push('/dish')` 就会打它）、`POST /dish/status/{status}`、`DELETE /dish`、`PUT /dish`、`GET /dish/{id}`、`GET /dish/list`。`POST /dish`（新增）已实现，见第 17 节 —— 但列表页还没实现，所以新增成功跳回列表页仍然报 404。
+- 菜品：**已无缺口**。新增、分页、删除、修改、回显、起售/停售、按分类或名称查列表均已实现（第 17~24 节），图像/数据库一致性见第 18、24 节。用户端的 `/user/dish/list` 是另一个接口，随用户端模块一起尚未开始。
 - 套餐：`/setmeal/*`。
 - 订单与统计：`/order/*`、`/workspace/*`、`/report/*`。
 - 营业状态：`/shop/status`、`/shop/{status}`。（`/common/upload` 已实现，见第 16 节）
@@ -269,7 +271,7 @@ sudo nginx -c /Users/cc/Desktop/waimai/frontend/nginx-mac.conf -s stop
 
 按需选择启动/重载/停止命令，不要整段连续执行。管理端访问 `http://localhost/`；Knife4j 入口为 `http://localhost:8080/doc.html`。若前端改用 8081 等端口，要同时检查上述硬编码 WebSocket 地址。
 
-后续代码修改可先在父工程目录执行 `mvn test` / `mvn package`。默认 `mvn test` 执行 113 项、0 失败、7 项跳过（7 个真实 MySQL 联调类按默认配置跳过）；用 mock 的类为 `EmployeeLoginTest` 25 项（认证、新增校验、密码哈希）、`DishSaveTest` 21 项（新增菜品，含前端真实形状的请求体、失败后删图的补偿）、`EmployeeUpdateTest` 11 项、`AutoFillAspectTest` 9 项（公共字段填充切面本身）、`LocalFileUtilTest` 9 项（上传目录解析、路径拼接到存在性判断与删除）、`EmployeeStatusTest` 7 项、`EmployeePageQueryTest` 7 项、`GlobalExceptionHandlerTest` 7 项、`CommonUploadTest` 6 项（上传接口）、`EmployeeGetByIdTest` 4 项。显式启用的联调类为 `EmployeeDatabaseTest`、`EmployeePageQueryDatabaseTest`、`EmployeeStatusDatabaseTest`、`EmployeeUpdateDatabaseTest`、`CategoryDatabaseTest`、`DishDatabaseTest`（5 项）、`DishImageRollbackDatabaseTest`（4 项，**故意不加 `@Transactional`**，因为被验证的正是事务完成回调，见第 18 节）。前六个联调类的测试数据在事务结束后回滚，最后一个自己清库清盘。`SKY_DB_TESTS=true` 下共 130 项全部通过。测试源码未被 `.gitignore` 排除（针对测试的忽略规则已移除），但**"没被忽略"不等于"已提交"**：有若干测试类至今仍是未跟踪状态，见第 9 节末尾的提醒。
+后续代码修改可先在父工程目录执行 `mvn test` / `mvn package`。默认 `mvn test` 执行 214 项、0 失败、13 项跳过（13 个真实 MySQL 联调类按默认配置跳过）；用 mock 的类为 `EmployeeLoginTest` 25 项（认证、新增校验、密码哈希）、`DishDeleteTest` 29 项（批量删除，含图片清理的判据与"不抛异常"契约，见第 24 节）、`DishUpdateTest` 23 项、`DishSaveTest` 23 项（新增菜品，含前端真实形状的请求体、失败后删图的补偿、菜名与口味名去空白）、`DishStatusTest` 14 项（起售停售，见第 22 节）、`DishListTest` 12 项（按分类/名称查列表，见第 23 节）、`EmployeeUpdateTest` 11 项、`AutoFillAspectTest` 9 项（公共字段填充切面本身）、`LocalFileUtilTest` 9 项（上传目录解析、路径拼接到存在性判断与删除）、`DishPageQueryTest` 8 项、`EmployeeStatusTest` 7 项、`EmployeePageQueryTest` 7 项、`DishGetByIdTest` 7 项、`GlobalExceptionHandlerTest` 7 项、`CommonUploadTest` 6 项（上传接口）、`EmployeeGetByIdTest` 4 项。显式启用的联调类为 `EmployeeDatabaseTest`、`EmployeePageQueryDatabaseTest`、`EmployeeStatusDatabaseTest`、`EmployeeUpdateDatabaseTest`、`CategoryDatabaseTest`、`DishDatabaseTest`（6 项，含"带空格的菜名会被规范化后撞上唯一索引"）、`DishListDatabaseTest`（9 项，见第 23 节）、`DishDeleteDatabaseTest`（8 项）、`DishStatusDatabaseTest`（7 项，见第 22 节）、`DishUpdateDatabaseTest`（5 项）、`DishPageQueryDatabaseTest`（4 项）、`DishImageRollbackDatabaseTest`（6 项，**故意不加 `@Transactional`**，验证的是"+新增/修改回滚**时删图"，见第 18 节）、`DishDeleteImageDatabaseTest`（6 项，同样**故意不加 `@Transactional`**，验证的是"删除**提交**时删图"，见第 24 节）。这两个非事务类真实提交、自己清库清盘；其余联调类的测试数据都在事务结束后回滚。`SKY_DB_TESTS=true` 下共 267 项全部通过。测试源码已全部纳入 Git（"图片上传"那次提交漏掉的几个文件已在第 21 节那次提交里补上）。
 
 只跑 sky-server 时用 `mvn -pl sky-server -am test`，**不要省掉 `-am`**：省掉后 sky-common 取自本地仓库里的旧构件，改过 sky-common（如新增 `FileUploadException`）就会出现一堆 `NoClassDefFoundError`，看起来像代码坏了，其实只是没重新构建依赖模块。
 
@@ -286,7 +288,7 @@ sudo nginx -c /Users/cc/Desktop/waimai/frontend/nginx-mac.conf -s stop
 
 当前 Git 分支为 `master`。已有提交按时间依次为「苍穹外卖初始代码」→「员工管理页面所有功能完成」→「分类功能导入」→「公共字段自动代码填充」→「图片上传」，一次增量一个提交；具体哈希以 `git log` 为准，本文不复制。是否还有未提交改动一律以 `git status --short` 为准 —— 本文与代码同属一次提交，写字当下就有新的改动，在这里断言"工作区干净"只会立刻过期。
 
-**「图片上传」那次提交漏了文件**：`FileUploadException`、`UploadProperties`、`LocalFileUtil`、`UploadConfiguration` 和 `CommonUploadTest`、`LocalFileUtilTest`、`AutoFillAspectTest`、`CategoryDatabaseTest` 至今仍是未跟踪状态（`git status` 里的 `??`）。后果不是"少几个文件"而是：从已提交内容全新克隆出来**编译不过** —— `CommonController` 引用了没入库的 `FileUploadException` 与 `LocalFileUtil`。下次提交前先 `git add -A` 把这几个补上。第 17、18 节的菜品新增与图片回滚改动同样尚未提交（后者还新增了未跟踪的 `DishImageRollbackDatabaseTest`）。
+**「图片上传」那次漏掉的文件已经在第 21 节那次提交里补上了**（`FileUploadException`、`UploadProperties`、`LocalFileUtil`、`UploadConfiguration` 与全部测试类均已入库，已用 `git ls-files` 核对）。工作区里现存的两条改动与菜品无关：`agent.md` 被删除、`project.md` 未跟踪 —— 本文档改过名，提交时 `git add -A` 一并带上即可。第 21 节之后的起售/停售改动（第 22 节）同样尚未提交。
 
 根 `.gitignore` 忽略 `.DS_Store` 与 nginx 的 `logs/`、`temp/`；`.idea/` 交给 `.idea/.gitignore` 处理，工程配置是有意保留在 Git 中的。
 
@@ -404,7 +406,7 @@ env JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home SKY
   - 启动时 `Files.createDirectories` 建好目录：静态资源映射指向不存在的目录不会报错，只会让所有图片 404。
 - 访问链路：`/uploads/**` 由 `WebMvcConfiguration.addUploadResourceHandler` 映射到该目录。**该类继承 `WebMvcConfigurationSupport`，Boot 的默认静态资源配置已整体退避**，`spring.web.resources.*` / `spring.mvc.static-path-pattern` 配了既不生效也不报错，换目录只能改 `sky.upload.dir` 或那段代码。
 - `/uploads/**` **必须留在 JWT 拦截器范围外**（拦截器只注册在 `/admin/**`）：`<img src>` 发出的请求带不上 `token`，把它加进拦截器会让全站图片立刻全裂。该端点匿名可读，所以另挂了一个 `PathResourceResolver` 子类做目录围栏 —— 解析结果 `normalize()` 后必须仍在上传目录内，不依赖框架自身的路径规范化行为。
-- **返回值是持久化契约**：`/uploads` 这个前缀定了就不能再改。它以 `/` 开头、由浏览器按当前站点（`http://localhost`）解析，所以库里存的值与域名、端口、项目绝对路径全部解耦。若将来必须改前缀，要同时迁移 `dish.image`、`setmeal.image`、`employee.image` 等列中的既有值。
+- **返回值是持久化契约**：`/uploads` 这个前缀定了就不能再改。它以 `/` 开头、由浏览器按当前站点（`http://localhost`）解析，所以库里存的值与域名、端口、项目绝对路径全部解耦。若将来必须改前缀，要同时迁移 `dish.image`、`setmeal.image`、`order_detail.image`、`shopping_cart.image` 等列中的既有值（已核过表结构，带 `image` 列的就是这四张；**`employee` 表没有 image 列**，早期几节里"employee.image"的提法是错的，见第 24 节）。
 - **失败返回 4xx，而不是项目惯例的「HTTP 200 + `code:0`」**，这是有意偏离，也是本文最容易被后人"修回去"的一处：前端 `el-upload` 的 XHR 只按状态码分流（`if (status < 200 || status >= 300) return onError(...)`），2xx 时它**不检查 `code`**、无条件执行 `imageUrl = "".concat(t.data)`。若沿用 200 + `{code:0,data:null}`，字符串 `"null"` 会被存进表单的 `image` 字段，而表单校验 `image: {required: true}` 对非空字符串是通过的，最终 `"null"` 落库：页面破图且控制台没有任何报错。返回 4xx 才会走 `handleError` 弹"图片上传失败"、表单值不变。
   - `FileUploadException` → 400：空文件、扩展名不在白名单、写盘失败
   - `MaxUploadSizeExceededException` → 413 + 「上传文件过大，请压缩后重试」（该异常在 handler 匹配之前抛出，但 `doDispatch` 的 try 覆盖它，`@RestControllerAdvice` 能捕获）
@@ -434,7 +436,7 @@ env JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home SKY
 - 已知未处理项：
   - `/uploads/**` **匿名可读**，猜到 UUID 就能取到图片。这是有意取舍（`<img src>` 带不上 token），UUID 不可枚举，但不要把它当成访问控制。
   - 库里 `dish.image` 仍有本次改造之前留下的 24 条阿里云 OSS 绝对 URL，本次**没有迁移**（外链还能正常显示）。写清理逻辑时注意不要用"删除所有非 `/uploads` 前缀的文件"这类判断，那会漏掉它们；断网或 OSS 侧清理后这些图会失效。
-  - 上传文件**没有清理、配额、审计日志**，也不在任何备份范围内（它不在 Git 里）。第 18 节补上了唯一一处自动删除：新增菜品失败回滚时删掉这张没被用上的图；除此之外的孤儿文件（上传完就放弃表单、进程被杀）依旧只增不减。
+  - 上传文件**没有清理、配额、审计日志**，也不在任何备份范围内（它不在 Git 里）。自动删除目前有两处，都在菜品模块里：新增/修改**失败回滚**时删掉没被用上的图（第 18、21 节），以及删除菜品**提交成功**后删掉不再被引用的图（第 24 节）。除此之外的孤儿文件（上传完就放弃表单、换图后遗留的旧图、进程被杀）依旧只增不减。
   - 只按扩展名过滤，伪装成 `.png` 的非图片会被接受并原样存盘。
   - 单独把 jar 拷到别处运行（不在 Maven 模块目录下）时锚点校验不过，目录会落在启动时的工作目录并按 `user.dir` 解析，想固定就显式配绝对路径。
 
@@ -463,11 +465,11 @@ env JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home SKY
 - 测试：`DishSaveTest` 15 项（mock，默认 `mvn test` 就跑：成功路径、主键不回填时的行为、无口味不调 `insertBatch`、逐项校验失败且断言**没有落任何库**、`status` 透传与缺省、重名、无 token 401）；`DishDatabaseTest` 5 项（真实 MySQL：四个审计列确实由切面填、回填主键落到 `dish_flavor.dish_id`、`value` 与传入的 JSON 字符串一致）。测试总数由 87 项变为 103 项、6 项跳过；`SKY_DB_TESTS=true` 下 117 项全部通过。
 - 联调实测（**后端与经 nginx 两段都验证过**）：`POST /admin/dish` 返回 `{"code":1,...}`，库中 `dish` 一行（`price` 12.50、`status` 0、`create_user`/`update_user` = 当前管理员、`create_time` = `update_time`）+ `dish_flavor` 两行且 `dish_id` 正确；六条负例（重名、分类不存在、价格为 0、缺图片、口味名为空、`status=2`）全部返回 `code=0` + 对应中文提示，无 token 返回 401，且**没有任何一条留下半截数据**；`http://localhost/api/dish` 同样返回 `code=1`（`/api` 这条代理本来就通，与第 16 节那个待 reload 的 `/uploads/` 是两回事）。联调插入的行已删除，基线恢复 24 菜品 / 24 口味。
 - 已知未处理项：
-  - **只有新增**。`GET /dish/page`（列表页）以及 `POST /dish/status/{status}`、`DELETE /dish`、`PUT /dish`、`GET /dish/{id}`、`GET /dish/list` 都还没有，所以新增成功跳回列表页仍然报 404 —— 数据确实进库了，但页面看起来是坏的。验证数据只能查库或走接口。
+  - ~~**只有新增**~~。当时 `GET /dish/page`（列表页）以及 `POST /dish/status/{status}`、`DELETE /dish`、`PUT /dish`、`GET /dish/{id}`、`GET /dish/list` 都还没有。**这些已在第 19~23 节全部补齐**，菜品模块到第 23 节为止不再有缺口。
   - 分类的 `type` 没校验：`categoryId` 指向一个套餐分类（`type=2`）也会写成功。接口文档没要求，前端下拉框只给 `type=1`，所以只能由直接调接口造出来；它会在列表页显示成挂着套餐分类名的菜品。
   - 同一菜品里的**重名口味不拒**（`dish_flavor` 没有唯一索引），口味的 `value` 也不校验是不是合法 JSON。
   - 4 字节字符（emoji）会以 `Incorrect string value` 500 收场：`dish.name` 等列是 `utf8mb3`，长度校验通过也存不下去。项目全局现状（`employee` 表同样如此），不在这里单独处理。
-  - 库里 24 条 `dish_flavor` 有 **11 条是孤儿**：`dish_id` 指向 2~10 这些不存在的菜品（现存菜品 id 从 46 起），另有 14 条菜品没有任何口味。这是本次改造**之前**就存在的数据（本次没有任何删除菜品的代码路径），按 `dish_id` 查口味的正常逻辑看不到它们，但写"统计口味数量"这类脚本时要留意。
+  - 库里 24 条 `dish_flavor` 有 **11 条是孤儿**：`dish_id` 指向 2~10 这些不存在的菜品，另有 14 条菜品没有任何口味。这是本次改造**之前**就存在的数据（本次没有任何删除菜品的代码路径），按 `dish_id` 查口味的正常逻辑看不到它们，但写"统计口味数量"这类脚本时要留意。**注：本节写下时存量菜品是 24 道（id 46~69），第 24 节记录了一次数据变化——用户在界面上删掉了 id 46~63 那 18 道，现在存量是 6 道（id 64~69），孤儿口味仍是那 11 行。**
 
 
 ## 18. 新增菜品的事务一致性：图片文件的补偿回滚（2026-09-23）
@@ -481,7 +483,7 @@ env JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home SKY
 - **回滚删图**：`DishServiceImpl.saveWithFlavor` 在动任何表之前注册 `TransactionSynchronizationManager.registerSynchronization(...)`，只在 `afterCompletion(STATUS_ROLLED_BACK)` 时删。为什么要等回调而不是在 `catch` 里删：**只有事务确实回滚了才删，提交成功时绝不能删**（否则每新增一道菜就把自己的图删掉）。注册点放在校验之前，所以校验失败、分类不存在、重名、口味写入失败、数据库断开——所有失败路径都被覆盖。`TransactionSynchronization` 在 Spring 5.3 里不是废弃类型（废弃的是 `TransactionSynchronizationAdapter`），只覆写需要的那个默认方法即可。
 - **没有活动事务时的退化**：`isSynchronizationActive()` 为 false 时（单测直接 `new` 出 service，或将来有人删掉 `@Transactional`）等不到回调，代码在 `catch` 里就地删。这条分支不是可有可无的兜底：它正是 `DishSaveTest` 唯一能覆盖到的删除路径（那一层没有 Spring 事务），另一条则由第 8 节那个联调类覆盖。
 - **删之前先查"还在不在用"**：`dishMapper.countByImage(image) > 0` 就不删。回滚之后本次请求写的那一行已经没了，此时还能查到引用，说明这张图是别的菜品在用的——客户端完全可以提交一个已存在的 `image` 路径、再因为重名失败。宁可少删一张孤儿图，也不能删掉别人正在用的图。
-- **只处理 `/uploads/...`**：`LocalFileUtil.isLocalPath` 之外一律直接返回。库里 24 条存量值是阿里云 OSS 绝对 URL（第 16 节），它们不是文件路径，不能拿去删。`countByImage` 目前只查 `dish`：`setmeal.image` 没有写接口、`employee.image` 在 mapper 里根本不出现；**将来这两处开始写本地上传图时，这个在用判断必须一起扩展**，否则会误删被套餐引用的图。
+- **只处理 `/uploads/...`**：`LocalFileUtil.isLocalPath` 之外一律直接返回。存量值里有阿里云 OSS 绝对 URL（第 16 节），它们不是文件路径，不能拿去删。在用判断当时只查 `dish`；**第 24 节已把它扩展到 `setmeal.image`**，并更正了本节的一处错误提法：`employee` 表**没有** image 列，带 image 列的是 `dish`、`setmeal`、`order_detail`、`shopping_cart`。
 - **新约束：`image` 是本地路径时必须真存在**（`DISH_IMAGE_NOT_FOUND` =「图片文件不存在，请重新上传」，走 `BaseException` → HTTP 200 + `code:0`，与其它业务提示一致）。这条不是顺手加的校验，而是"失败即删图"能成立的前提：重名这类失败会让图被删掉，而表单里还留着那个路径，用户改个名字重提交就会写出一条**挂在已被删掉的图上的菜品**——比孤儿文件更糟，而且没人会发现。有了这条，那种不一致状态在任何时刻都不会存在。**代价要说明白：重名失败后重提交需要重新选一次图**（前端 `el-upload` 不会自动重传）。
 - **删图这道围栏与读图同一套判据**：`LocalFileUtil.storedFile` 把 `/uploads/...` 还原成绝对路径时 `normalize()` 之后必须仍在上传根目录内，越界（`/uploads/../x`、`/uploads//etc/passwd`）拒绝并记 WARN。入参来自客户端提交的 JSON，跟 `<img src>` 那侧一样按不可信输入对待。删除方法**永不抛异常**，删不掉只记 WARN——它会在事务完成回调里被调用，那里抛出去会盖掉真正的业务错误。
 - 改动文件：`sky-common` 的 `LocalFileUtil`（补 `isLocalPath`/`exists`/`delete` 与私有 `storedFile`）、`MessageConstant`（补 `DISH_IMAGE_NOT_FOUND`）；`sky-server` 的 `DishServiceImpl`（注册回调、`deleteUploadedImage`、图片存在性校验、把原实现体抽成私有 `save`）、`DishMapper`（`countByImage`）。`@Transactional` 保持默认（只对 `RuntimeException`/`Error` 回滚），不加 `rollbackFor`：本项目所有失败路径抛的都是 `RuntimeException`。
@@ -520,14 +522,14 @@ env JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home SKY
 - **`split(",", -1)` 的 `-1` 不能省**：默认的 `split(",")` 会丢掉末尾空串，`"1,2,"` 被切成 `["1","2"]` 而当成合法输入静默放行；`"1,,2"` 中间那个空串倒是能留下。两种情况都必须是"格式错误"，所以显式要求保留末尾空串。
 - **两条守卫，顺序固定**：`countOnSaleByIds > 0` → `DISH_ON_SALE`（「起售中的菜品不能删除」），再 `setmealMapper.countByDishIds > 0` → `DISH_BE_RELATED_BY_SETMEAL`（「当前菜品关联了套餐,不能删除」）。同时命中时报的是**前者**，顺序反过来同一批菜品会报出另一个原因。这两个常量与 `DeletionNotAllowedException` **早在第 17 节之前就预置但零引用**，正是为这个接口准备的，文案一字未改。用 `count(*)` 而不是把行查出来：只需要知道"有没有"，且 id 不存在的行自然不计入，"删一个已经被别人删掉的菜品"不会因此被拒。
 - **先删子表再删主表**：`deleteByDishIds` → `deleteByIds`。`dish_flavor` 与 `dish` 之间没有外键，反过来先删主表会留下一批指向不存在菜品的口味行（库里已有 11 行这种历史孤儿数据）。
-- **有意不删图片文件**：存量图是阿里云 OSS 绝对地址，删文件不可逆；而"这张图还有没有人在用"目前的判据只看 `dish` 表，误删风险大于收益。与第 18 节"唯一的自动删除是新增/修改失败回滚"的立场一致。
+- ~~**有意不删图片文件**~~：存量图是阿里云 OSS 绝对地址，删文件不可逆；而"这张图还有没有人在用"当时的判据只看 `dish` 表，误删风险大于收益。**这条决定已在第 24 节被推翻**：删除菜品现在会清理不再被引用的本地上传图（只删 `/uploads/...`，OSS 地址一律跳过），在用判断同时查 `dish` 与 `setmeal`，并且只在事务**提交成功之后**才删。
 - **不校验影响行数、id 不存在视为无操作**：前端重复点击删除、或菜品已被别人删掉，都应当安静成功（与"值未变时 MySQL 返回 0 行不当作失败"的既有约定一致）。
 - **4 条 `in` 语句全部放 XML**（`DishMapper.xml` 2 条、`DishFlavorMapper.xml` 1 条、**新建 `SetmealMapper.xml`** 1 条）：`<foreach>` 属于动态 SQL，本仓库的约定是简单单表 SQL 用注解、动态 SQL 放 XML；写成注解里的 `<script>` 字符串既难读又容易静默写错。单参数集合**必须 `@Param("ids")`** 且 XML 的 `collection="ids"` 对得上，漏写的报错是 `BindingException`，而且**只在第一次真调用时才炸**——mock 掉 mapper 就完全绕过 MyBatis，所以这 4 条全靠真库测试兜住。`SetmealMapper` 的注解式 `countByCategoryId` 与新建 XML 同处一个 namespace，只要 statement id 不重复即可共存。
 - 改动文件：`DishController`（`@DeleteMapping`）、`DishService`/`DishServiceImpl`（`@Transactional deleteByIds` + 私有 `parseIds`，新增 `setmealMapper` 注入）、`DishMapper`（`countOnSaleByIds`/`deleteByIds`）、`DishFlavorMapper`（`deleteByDishIds`）、`SetmealMapper`（`countByDishIds`）、`MessageConstant`（补 `DISH_ID_EMPTY`「菜品id不能为空」、`DISH_ID_FORMAT_ERROR`「菜品id格式错误」，命名照 `EMPLOYEE_ID_EMPTY`）。**4 条方法一个都不能标 `@AutoFill`**（第 15 节：切点会拦下所有带该注解的 mapper 方法并把首参当实体反射调 setter，标在只读/删除方法上只会运行期抛异常）。
 - 测试：新增 `DishDeleteTest` 22 项（成功路径四个 mapper 各一次且参数是解析后的列表、`InOrder` 证明先删子表、去重、3 组空白 id + 10 组脏输入整体拒绝且一次 mapper 都没调、两条守卫各自的中文提示、双命中报起售、不存在 id 幂等、任何路径都不碰 `localFileUtil`、401）；`DishDeleteDatabaseTest` 8 项（真库：主表子表同时干净、起售被拒且数据完好、被套餐引用被拒且三处行都在、批量 + 未知 id 幂等、只删目标不影响旁边的菜及其口味、格式错误不写库、删不存在的 id 不动任何现存行、本类测试数据无残留）。测试总数由 122 项变为 145 项（9 项跳过）、`SKY_DB_TESTS=true` 下由 142 项变为 172 项。
   - **联调类里的测试数据必须自己插 `status = 0` 的菜**：库里存量 24 道菜全是 `status = 1`，拿它们当删除目标会直接撞上"起售中的菜品不能删除"守卫。反过来这也让"成功删除"这条用例顺带证明了 `countOnSaleByIds` 的 `in` 条件真的生效——丢掉 `id in (...)` 就会命中存量菜品而被拒。
 - 已知未处理项：
-  - **存量 24 道菜在界面上删不掉**：它们全是 `status = 1`，而 `POST /admin/dish/status/{status}` **尚未实现**，前端连"停售"都点不动（那个请求 404）。要删只能在库里 `update dish set status = 0 where id = ?`，或者补做状态接口（**建议作为下一步**）。新增出来的菜品 `status` 恒为 0（第 17 节），可以正常删除。
+  - ~~**存量 24 道菜在界面上删不掉**~~：它们全是 `status = 1`，而 `POST /admin/dish/status/{status}` 当时尚未实现，前端连"停售"都点不动。**这条已在第 22 节解决**：先停售再删除的完整链路已用真库测试走通。新增出来的菜品 `status` 恒为 0（第 17 节），本来就可以正常删除。
   - **守卫与删除之间没有加锁（TOCTOU）**：守卫通过后、DELETE 执行前，若别人把菜品改成起售或把它加进套餐，仍会被删掉。默认 REPEATABLE READ 下 `count` 是快照读，挡不住并发写。本次按需求实现，未加 `for update`。
   - **`ids=+1` 会被拒**（`\d+` 只接受纯数字；`Long.parseLong` 本身是接受 `+1` 的），`007` 被接受并等值为 7。
   - **响应里 `data`/`msg` 都是 null**：接口文档把 `data` 标成 string，但它是非必填项，前端只判 `code`——与 `POST /admin/dish` 同一取舍（第 17 节的注释）。
@@ -555,10 +557,155 @@ env JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home SKY
 - 测试：新增 `DishGetByIdTest` 7 项（字段齐备 + `price` 是 number + `updateTime` 是字符串 + `categoryName` 为 null + `flavors` 数组、无口味返回 `[]`、口味查询返回 null 也兜成 `[]`、不存在报业务错且不再查口味、`/page` 不被抢走、非数字 id 是 Spring 层 400 且响应体为空、401）；`DishUpdateTest` 23 项（前端真实请求体四列正确且 `id` 保留、`updateTime`/`updateUser`/`createTime`/`createUser` 全为 null 交给切面、`InOrder` 证明 update → 删口味 → 插口味、客户端 `id`/`dishId` 被覆盖、清空口味的两种写法等价、11 组非法输入各自的中文提示且一行不写、分类不存在、菜品不存在、缺 id 时连 `getById` 都不问、本地图片不在磁盘被拒、重名报业务错且不吃掉口味、失败删图、**图片没换时不删**、401）；`DishUpdateDatabaseTest` 5 项（真库 `@Transactional`：改行 + 整组替换口味、改成自己当前的名字允许、改成别的菜名被拒、回显且 `/page` 仍正常、非数字 id 是 400）；`DishImageRollbackDatabaseTest` 由 4 项扩到 6 项（追加"修改回滚删掉新换的图"与"图片没换时不删"，**该类仍然故意不加 `@Transactional`**，因为它验证的正是事务结束时的行为）。测试总数由 145 项变为 176 项（10 项跳过）、`SKY_DB_TESTS=true` 下由 172 项变为 209 项。跑完两轮后库里仍是 24 菜品 / 24 口味 / 11 行孤儿口味 / 0 行停售，测试数据零残留。
 - 已知未处理项：
   - **只做了 MockMvc 层验证（mock + 真库两套），没有跑真实 nginx + 浏览器的端到端**：页面能否真的打开编辑页、保存后列表页是否刷新，未亲眼确认（前端是已构建的 bundle，不能重新构建，契约是从 source map 读出来的）。
-  - **换图成功后旧图不删，会成为孤儿文件**：与第 18 节立场一致（目前唯一的自动删除仍是"新增/修改失败回滚删图"）。
+  - **换图成功后旧图不删，会成为孤儿文件**：与第 18 节当时的立场一致。注意这条在**第 24 节之后更加显眼**了——删除菜品现在会清理图片，而换图遗留的旧图**连那条清理都够不到**：`listImagesByIds` 只返回菜品**当前**引用的 image，旧值已经无人引用。也就是说它是永久性泄漏，是将来若做"孤儿对账"任务时的主要来源。
   - **无法通过本接口把某一列清成 null**：动态 `<set>` 的固有行为，前端够不到（表单总是带上该键），直接调接口可达。
   - **`flavors` 缺省 == 清空口味**这条语义对直接调接口的客户端是个陷阱。
   - **本接口不做「起售中不能编辑」守卫**，起售中的菜品也能改。
   - 价格 `12.500` 这类等值写法仍放行（沿用 `stripTrailingZeros` 的既有判据）；4 字节字符（emoji）仍会以 `Incorrect string value` 500 收场（`utf8mb3` 列的全局现状）。
   - `DishUpdateDatabaseTest` 只断言了 `update_time` 被刷新（`isAfter`），没断言它的字符串格式（`GET /{id}` 那侧有断言）。
   - **写真库测试时的坑**：Connector/J 8 的 `getObject()` 对 DATETIME 列返回 `java.time.LocalDateTime`，不是 `java.sql.Timestamp`，强转会 `ClassCastException`（写库那侧用 `Timestamp` 传参不受影响）。
+  - **动态 `<set>` 的空集合地雷（当前不可达，记下来免得将来踩）**：`DishMapper.xml` 的 `update` 里所有列都在 `<if test="xx != null">` 里。若某次调用传进来的实体**只有 id 有值**，`<set>` 会产出空内容，SQL 变成 `update dish set where id = ?` —— 语法错误、500。MyBatis 的 `<set>` 只负责去掉多余的逗号，不会处理"一个 `<if>` 都没命中"。现在够不到：`updateWithFlavor` 必经 `validate`（名称等必然非 null），`startOrStop` 必然带 status，两处还都在进 mapper 前检查了登录上下文（否则切面不填审计列，就只剩 id 了）。将来若新增"只改一个字段"的调用方，要记得这条。
+
+
+## 22. 菜品起售、停售（POST /admin/dish/status/{status}，2026-09-23）
+
+第 20 节留下的那条限制——「存量 24 道菜全是 `status = 1`，界面上的"停售"点不动（那个请求 404），要删只能在库里 `update dish set status = 0`」——这一节把它结束掉。到本轮为止，**管理端菜品页的全部接口都已实现**。
+
+前端真实契约（从已构建 bundle 的 source map 核对）：
+
+- 列表页操作列的那个按钮调 `dishStatusByStatus({id, status})`，拼成 `POST /dish/status/${status}?id=xx`。
+- `status` 是**字符串**（`params.status = row.status ? '0' : '1'`），绑到 `Integer` 路径变量上没问题。
+- 按钮文案按当前状态取反（停售的菜显示"启售"），所以发过来的永远是切换后的目标值。
+- **工具栏只有「批量删除」和「+ 新建菜品」，没有批量启售/停售**，所以 `id` 恒为单个菜品id。
+
+要点：
+
+- **只收单个 id，不接受逗号分隔**：`@RequestParam(required = false) Long id`（与 `EmployeeController#startOrStop` 同款写法，缺参也能给出中文提示而不是 Spring 的 400）。
+  - 前端 `statusHandle` 里确实有一个 `typeof row === 'string'` 的批量分支会把 `checkList.join(',')` 当 id 发出来（`setmeal/index.vue` 里同款代码用的键名是 `params.ids`），但在菜品页**是死代码**：没有任何按钮会用字符串去调它。
+  - 所以 `?id=46,47` 进不了方法体，绑不进 Long 直接 400。真要支持批量得改契约（像 `DELETE /admin/dish` 那样收 ids 串），不是把 Long 换成 String 就完事——那会让"哪些菜允许一起改状态"变成新问题。
+  - 这条有专门测试 `rejectsIdsThatCannotBindToALongAsASpringLevelBadRequest`。**同一测试里那句"响应体是空的"只在 MockMvc 这一层成立**：MockMvc 不做 ERROR 派发，而真实 Tomcat 下同一个请求返回的是 Boot `BasicErrorController` 的 `{"timestamp":...,"status":400,"error":"Bad Request","path":"..."}`（本轮实测）。两种形态都不是项目的 `{"code":0,...}` 结构，别把空 body 当线上契约。
+- **复用同一条动态 update**：实体上只带 `id` 与 `status`，动态 `<set>` 因此只写 `status` 一列（外加切面刷新的两个审计列），名称、价格、图片、分类、口味一列都不会出现在 SQL 里。测试对这一点断言得很死：`assertOnlyIdAndStatusAreSet` 逐个断言其余字段为 null，真库测试还会把改动前后的每一列做比对。
+- **`status` 只能是 0/1**，其他值返回 `DISH_STATUS_ERROR`（「菜品状态值不合法，只能为1(起售)或0(停售)」）。这个常量**早在第 17 节之前就预置但零引用**，正是为这个接口准备的，文案一字未改。
+  - 不拦的后果与第 17 节 `status` 缺省那条同源：列表页按 `status` 是否为 0 二分显示，写进 2 的菜会显示成"启售"，而按 `status = 1` 过滤的查询又查不到它。
+- **菜品必须存在**（`getById(id) == null` → `DISH_NOT_FOUND`）。这里跟分类的 `startOrStop` 不一样——分类那条**完全没有校验**（第 15 节的已知未处理项），菜品这条照员工的做。
+- **不校验影响行数**：把状态改成它当前的值时 MySQL 返回 0 行，重复点击"起售"不该报错（与员工启停、菜品修改同一约定）。前端那个按钮本来就按当前状态取反，连着点两次只是空转。
+- **不删图片、不碰口味**：与删除接口同一立场（存量图是 OSS 绝对地址，删了不可逆）。有测试断言这条路径一次都没调用过 `localFileUtil`，真库测试也断言口味一行未动。
+- **改动文件**：`DishController`（`@PostMapping("/status/{status}")`）、`DishService`/`DishServiceImpl`（`startOrStop`）。`DishMapper.update` 与它的 `@AutoFill(UPDATE)` 一行未改——起售停售就是"只改一列的 update"，不需要新的 SQL，也不需要新的 mapper 方法。
+- **测试**：新增 `DishStatusTest` 14 项（mock：起售/停售两条成功路径且实体上只有 id 与 status、目标状态与当前值相同时也算成功、3 组非法状态 + 2 组非正 id + 缺 id 各自的中文提示且一次 mapper 都没调、菜品不存在、2 组绑不进 Long 的 id 是 Spring 层 400、401、以及"不碰口味/分类/套餐/文件系统"）；`DishStatusDatabaseTest` 7 项（真库 `@Transactional`：起售与停售各自只刷新 `update_time`/`update_user` 且其余列逐列比对不变、`create_*` 不受影响、带口味的菜口味一行不动、**存量起售菜品"停售 → 删除"两步走通**、非法状态/菜品不存在/缺 id 被拒时行原样不动、测试数据零残留）。测试总数由 176 项变为 191 项（11 项跳过）、`SKY_DB_TESTS=true` 下由 209 项变为 230 项。
+  - 那个"停售 → 删除"的用例值得单独说一句：它挑的是**库里已有的真实起售菜品**（不是自己造的），先断言它照旧删不掉、再停售、再删成功，最后靠 `@Transactional` 把这道菜连同口味原样回滚回来。它证明的正是本接口存在的理由，而不只是"能改 status 列"。
+- **联调实测**（**后端段已验证；nginx 段见下条**）：用 SQL 造一道 `status = 0` 的临时菜（不动存量行，避免在真实数据上留下被改动的 `update_time`）→ `POST /admin/dish/status/1?id=430` 与 `.../status/0?id=430` 均返回 `{"code":1,"msg":null,"data":null}`，库中 `status` 随之翻转、`update_user` 变成令牌里的 admin id、`update_time` 被刷新；`status=2` → 「菜品状态值不合法，只能为1(起售)或0(停售)」；缺 id 与 `id=0` → 「菜品id不能为空」；`id=999999` → 「菜品不存在」；无 token → 401 + 「用户未登录」；`?id=430,2` → 400。**`GET /admin/dish/page?status=0` 从 0 条变成返回这道刚停售的菜**——这就是本接口修好的那件事。临时菜已删除，基线恢复 24 菜品（全起售）/ 24 口味。
+- 当前运行态（本次快照）：后端 jar 以 PID 2430 运行，PID 文件 `/tmp/waimai-dishstatus-server.pid`、日志 `/tmp/waimai-dishstatus-server.log`。进程号是快照，后续操作前重新确认；改用 IDEA 启动前先停掉这个 jar，否则 8080 端口冲突。
+- **已知未处理项**：
+  - **nginx 段没验证**：本机 nginx 没在运行，而启动它需要 `sudo`（工具里的 shell 是非交互的，拿不到密码）。`/api/` 这条代理本来就通（第 17、18、21 节的联调都走过同一段），只是本轮没亲眼确认。需要时按第 8 节的命令启动 nginx，或在会话里直接跑 `! sudo nginx -c /Users/cc/Desktop/waimai/frontend/nginx-mac.conf`。
+  - **不做「被套餐引用就不能停售」这类守卫**：接口文档没要求。停售一道被套餐引用的菜会让那个套餐看起来"含停售菜品"，但套餐侧的启售校验（`SETMEAL_ENABLE_FAILED`）还没有实现，所以目前没有任何地方会拦。
+  - **停售只是改一列**：不记录"谁在什么时候停的"（只有 `update_user` / `update_time`），停售后这道菜仍可被修改、被再次起售。
+  - **`id` 非数字（`?id=abc`）是 Spring 层 400**，与 `?page=abc`、`GET /admin/dish/abc` 同一现状，属全局口径问题（`GlobalExceptionHandler` 没有 MethodArgumentTypeMismatchException 分支），不由本接口单独决定。
+  - **并发无保护**：两个人同时点同一道菜的状态按钮，后提交的那次覆盖前一次，没有乐观锁（与第 20 节删除守卫的 TOCTOU 是同一类现状）。
+
+
+## 23. 按分类或名称查询菜品列表（GET /admin/dish/list，2026-09-23）
+
+本轮同时交付了接口文档里的两个接口，但**只有一个是真的要写**：
+
+- `GET /admin/dish/{id}`（按 id 查菜品）**第 21 节已经实现**，本轮逐字段核对后确认无需改动。唯一的差异是 `categoryName`：接口文档把它标成「必须」，而实现刻意返回 `null`（第 21 节的决定：编辑页只读 `categoryId`，不为没人读的字段多写一条 join）。这一轮复核了前端 `addDishtype.vue` 的 `init()`——它整个 `{...res.data.data}` 铺进表单，读的是 `categoryId`，`categoryName` 从头到尾没被读过，所以维持原状。**顺带重申第 13 节的那条经验：swagger 文档里 VO 字段的「必须」是由实体自动生成的，不是真约定**（`employee` 的响应把 `password` 也标成必须，实际返回 null）。别照着这份文档去"补齐"字段。
+- `GET /admin/dish/list` 是真正新增的那个。
+
+前端真实契约（从已构建 bundle 的 source map 核对）：**唯一的调用方是套餐页的选菜组件** `setmeal/components/AddDish.vue`，它发两种形状：
+
+- `queryDishList({categoryId: id})` —— 初始化时用 `GET /category/list?type=1` 拿到的**第一个**分类，以及每次点分类；
+- `queryDishList({name})` —— 关键字搜索，由 `@Watch('seachKey')` 触发，**只发 name、不带 categoryId**。
+
+并且它无条件读 `res.data.data.length`（`if (res.data.data.length == 0) { ... return }`）。
+
+要点：
+
+- **两个条件都做成可选、可叠加**（`@RequestParam(required = false)`），而不是照文档把 `categoryId` 做成必填：搜索那一支不发 `categoryId`，做成必填会让它直接 400，整个搜索框不可用。既然允许"没有 categoryId"，就没有理由再禁止"两个都没有"——那是凭空多一条接口文档没写的限制（与第 17 节价格上限同一立场）。都不传就返回全部菜品。
+- **不过滤起售状态**（本轮明确决定，与教程版实现相反）。理由有两条，都在前端与常量里：
+  - 选菜组件对 `status == 0` 的菜**显式渲染「停售」标签**（`item.status == 0 ? '停售' : '在售'`）。过滤掉就等于那段模板永远走不到。
+  - 预置常量 `SETMEAL_ENABLE_FAILED`「套餐内包含未启售菜品，无法启售」**说明停售菜品本就可以先进套餐**，由套餐启售时兜底。若这里就过滤掉，"套餐里有停售菜"这个状态根本不可能出现，那条常量也就失去意义。
+  - 有两条测试专门守这条决定：mock 的 `neverTreatsStatusAsAFilterEvenWhenTheCallerSendsOne` 断言交给 mapper 的条件载体上 `status` 是 null；真库的 `returnsEveryDishOfTheCategoryIncludingOffSaleOnes` 直接断言停售的菜出现在结果里。谁要给 XML 加上 `status = 1`，立刻变红。
+  - 调用方自己传 `?status=1` 也**不会**生效：方法没声明这个参数，Spring 直接忽略（真库有 `ignoresAStatusParameterPassedByTheCaller` 守着）。
+- **返回 `Dish` 实体而不是 `DishVO`**：接口文档的响应模型列了 `createTime` / `createUser` / `updateUser`，这三列只在实体上有，`DishVO` 里没有（它多的是 `categoryName`，本接口不需要）。真库测试断言这三列真的带出来了——这是"选实体"的依据，不是随手定的。
+- **不分页、没有 PageHelper**：这是列表不是分页查询，`page` / `pageSize` 之类的参数会被忽略（有测试）。
+- **`order by id`**，不是分页那套 `update_time desc, id desc`。第 19 节用 `update_time desc` 是为了"翻页稳定"，本接口不分页、不需要那个理由，只需要一个确定的顺序；按主键排还有个好处：有人改了一道菜，选菜列表的顺序不会跟着抖。
+- **空结果必须是 `[]` 而不是 null**：前端直接读 `data.length`，null 会让整个弹窗抛 TypeError（与第 21 节 `flavors` 那条同一类硬约束）。MyBatis 的 select 返回集合时本身不会给 null，Service 里还是兜了一次。
+- **`/list` 不会抢走 `/{id}` 或 `/page`**：路径匹配里字面量优先于变量。这条不靠"返回了 200"证明，而是断言 `dishMapper.getById` 一次都没被调用（与第 19、21 节同一手法）。
+- 改动文件：`DishController`（`@GetMapping("/list")`，新增 `java.util.List` / `Dish` 两个 import）、`DishService`/`DishServiceImpl`（`list(categoryId, name)`）、`DishMapper`（`List<Dish> list(Dish)`，**不加 `@AutoFill`**）、`DishMapper.xml`（`list` 的 select，动态 `<where>` + `order by id`）。**没有改任何实体、DTO、VO 或表结构**。
+- 测试：新增 `DishListTest` 12 项（mock：只有 categoryId、只有 name、两个都没有、两个都有、name 去空白、纯空白等同不筛选、空结果是数组、mapper 给 null 也兜成数组、实体形态含三列审计字段且 `price` 是 number / `updateTime` 是字符串、status 不参与筛选、`/list` 不被 `getById` 抢走、401、不碰口味/分类/套餐/文件系统、未认领的查询参数被忽略）；`DishListDatabaseTest` 9 项（真库 `@Transactional`：分类下的菜一条不漏且含停售、别的分类不混进来、只发 name 也能搜、去空白、两个条件是 AND、`?status=` 被忽略、实体形态三列审计字段、空结果是数组、不分页、测试数据零残留）。测试总数由 191 项变为 204 项（12 项跳过）、`SKY_DB_TESTS=true` 下由 230 项变为 251 项。
+  - 写 mock 测试时踩到一个坑：`MockMvcRequestBuilders.get("/admin/dish/list?name=%E9%B1%BC")` 里的**百分号转义不会被解码**，参数拿到的是字面量 `%E9%B1%BC`，断言会以一种看起来像"服务端没处理中文"的方式失败。要么用 `.param("name", 中文)`，要么就是纯粹的 ASCII。本类统一用 `.param()`。
+- **联调实测**（后端 8080 段；nginx 段仍未验证，理由同第 22 节，本机 nginx 没在运行且启动要 sudo）：`GET /admin/dish/list?categoryId=16` → `code:1` + 3 条，字段集为 `[categoryId, createTime, createUser, description, id, image, name, price, status, updateTime, updateUser]`（正是实体形态）；再传 `&status=1` 条数不变（3 条，证明它没参与筛选）；`?name=鱼` → 8 条；**用 SQL 造了一道 `status = 0` 的菜放进分类 16，列表里照常出现**（这是本轮那个决定的实地证明）；`?name=<不存在>` → `{"code":1,"msg":null,"data":[]}`；无 token → 401 +「用户未登录」；`GET /admin/dish/{id}` 复核返回 `categoryName: null`、`flavors: []`、`price` 是数字、`updateTime` 是 `"2026-09-23 15:13"` 字符串。临时菜已删除，基线恢复 24 菜品（全起售）/ 24 口味。
+- 当前运行态（本次快照）：后端 jar 以 PID 3003 运行，PID 文件 `/tmp/waimai-dishlist-server.pid`、日志 `/tmp/waimai-dishlist-server.log`（第 22 节那个 PID 2430 的进程已被本轮的替换掉）。进程号是快照，后续操作前重新确认；改用 IDEA 启动前先停掉这个 jar，否则 8080 端口冲突。
+- **已知未处理项**：
+  - **不过滤起售状态是有代价的**：选菜组件会把停售菜列出来，用户能把它勾进套餐。这是照着"停售菜可以先进套餐、由套餐启售时兜底"的既有设计来的，但**那个兜底校验本身还没实现**（套餐模块没有后端），所以在套餐模块做出来之前，这个组合没有任何地方会拦。
+  - **两个条件都不传会返回全表**：目前 24 条无所谓，将来菜品上万时它是一次全表扫描。接口文档没写这条要必填，按"不加凭空限制"的立场放行了；真要在意，应加的是"至少传一个条件"而不是"categoryId 必填"。
+  - **`name` 里的 `%`、`_` 没转义**：与第 13 节员工分页、第 19 节菜品分页同一现状，会被当成 SQL 通配符。搜 `%` 会匹配全部。
+  - **没有分页**：接口文档的响应模型里没有 `total` / `records`，所以没做；真按分类查一个几千道菜的巨型分类时，会一次性全返回。
+  - **不 join 分类**：返回的是实体，没有 `categoryName`。选菜组件只用 `id` / `name` / `status` / `price`，不需要它。
+
+
+## 24. 删除菜品的图片一致性：提交后清理图片文件（2026-09-23）
+
+需求是「新增和删除菜品的接口都要让图片与数据库同成同败」。新增那半第 18 节已经做过（回滚删图）；这一节补的是**删除**那半——第 20 节当时明确"有意不删图片文件"，本轮推翻。
+
+先说清那条不能含糊的物理限制，它是整节的出发点：**MySQL 的事务包不住磁盘写文件**。本地文件系统没有两阶段提交，`@Transactional` 管不到 `Files.delete`。所以图片一侧永远只能"事后补偿"，而且**补偿的方向由操作本身决定**：
+
+| 操作 | 补偿时机 | 为什么必须是这个方向 |
+| --- | --- | --- |
+| 新增 / 修改 | `afterCompletion(STATUS_ROLLED_BACK)`，**回滚则删图** | 回滚意味着这次没写成，那张图没人用了 |
+| 删除 | `afterCommit`，**提交则删图** | 回滚意味着菜品还在库里，它引用的图必须原样留着 |
+
+两条挂反任意一条都会造成损坏：新增挂到提交上，每新增一道菜就把自己的图删掉；删除挂到回滚上，**一次被拒绝的删除会把菜品正在用的图删掉**（不可逆）。这不是"另一种也能工作"的写法，是只有一种正确。
+
+- **顺序固定**：解析参数 → 守卫一（起售不能删）→ 守卫二（被套餐引用不能删）→ **`listImagesByIds` 记下这批菜品引用的图片** → 注册提交回调 → 删 `dish_flavor` → 删 `dish`。
+  - "先读图片"不能挪到删除之后：行删掉了就再也查不出这些菜品引用过哪些图片，那些文件永远清不掉。
+  - 读取放在两条守卫之后：被拒的请求不会白查一次。
+- **在用判断扩展到 `setmeal`**：`isImageInUse` = `dishMapper.countByImage(image) > 0 || setmealMapper.countByImage(image) > 0`。第 18 节承诺过"将来这两处开始写本地上传图时必须一起扩展"，`setmeal` 就是其中一处，本轮补上（新增 `SetmealMapper.countByImage`，注解式单表 count）。表当前是空的，这条现在恒为 0，留着是因为删文件不可逆。
+- **没有查 `order_detail` / `shopping_cart`**：这两张表也有 `image` 列（已核过表结构），但存的是下单、加购那一刻**拷下来的快照**，与"某个菜品当前使用的图"语义不同——删掉文件会让历史订单里的图片全部失效。这两个模块目前没有任何读写代码、表是空的，纳进来只是空转；**等它们开始写图时必须一并扩展这个判断**。
+- **更正一处早先的错误提法**：第 16、18、20 节都写过"`employee.image`"，但**`employee` 表根本没有 image 列**。带 `image` 列的是 `dish`、`setmeal`、`order_detail`、`shopping_cart` 四张。
+- **只删 `/uploads/...`**：`LocalFileUtil.isLocalPath` 之外直接返回，OSS 绝对地址既不当文件删、也不去查"有没有人在用"。有测试专门断言这两件事都没发生。
+- **清理永不抛异常，单张失败不影响后面的**：它跑在事务完成回调里，此刻数据库已经提交，抛出去只会让前端看到"删除失败"而库里其实已经删了。`deleteUploadedImage` 兜住一切异常只记 WARN，最坏结果是一个孤儿文件。有测试用"delete 抛异常"验证响应仍是 `code:1`。
+- **`listImagesByIds` 的 SQL 两个细节**：`image is not null` 过滤掉 null 行（否则下游要额外判空，`isLocalPath(null)` 虽然安全但没必要传进去），`select distinct` 让共用同一张图的几道菜只产生一条记录。单参数集合必须 `@Param("ids")`。
+- **改动文件**：`DishServiceImpl`（`deleteByIds` 拆出 `deleteRowsAndImages`，新增 `registerImagesCleanup`/`deleteUploadedImages`/`isImageInUse`）；`DishMapper` + `DishMapper.xml`（`listImagesByIds`）；`SetmealMapper`（`countByImage`）。**表结构、DTO、VO 一行未改。**
+- **顺带修掉的一个真实缺陷**：`saveWithFlavor` 原先直接 `dishDTO.getImage()`，而 `updateWithFlavor` 是 `dishDTO == null ? null : ...`。两者不对称，`saveWithFlavor(null)` 会 NPE（HTTP 层送不进 null，但直接调用方可以），`validate` 里第一句取字段同样会 NPE。现在两处入口对称判空，`validate` 也把空判断放在最前面，返回「菜品信息不能为空」这个业务提示而不是 500。
+- **独立复核**（另起一个 agent 从头审菜品模块，只读不改）**没有发现"在可达路径上产生错误行为"的功能性缺陷**，但提出三条值得采纳的加固，已处理两条：
+  - **`deleteUploadedImage` 的"不抛异常"保证原先漏了 try 外的那句守卫。** 这条值得记下来，因为 Spring 两个回调的异常处理**不对称**：`invokeAfterCompletion` 会捕获回调里的 Throwable 只记日志，而 **`invokeAfterCommit` 不捕获**。所以守卫若留在 try 外，删除路径上一旦它抛，异常会冒出 `commit()`，把一次**已经提交成功**的删除变成 500（正是那段注释说要避免的场景）；退化分支里则会顶掉原始业务异常；循环还会中断，后面所有图片都不再清理。当前够不到（`isLocalPath` 只是两次字符串判断、`image` 永不为 null），但已把守卫挪进 try，并加了一条"强行让 `isLocalPath` 抛"的测试把契约钉住——将来谁挪回去立刻变红。
+  - **`DishService#deleteByIds` 的接口 javadoc 没提图片清理**（impl 里提了）。接口是公开契约，已补上一段，写清"提交后删、只删 `/uploads/...`、方向与新增相反"。
+  - **一处 javadoc 被误解析**：`DishServiceImpl` 里那句散文"本地磁盘没有两阶段提交，`@Transactional` 管不到 `Files.write`"**正好把 `@Transactional` 放在了行首**，javadoc 会把它当块级 tag 解析，于是紧随其后的 `@param dishDTO` 被吞掉（IDEA 会报"错误标签'Transactional'"）。已改写措辞。全项目扫了一遍，没有第二处同类问题。
+  - 复核还**独立验证了回滚补偿在真实事务上确实生效**：上传一张图 → `POST /admin/dish` 用已存在的菜名提交 → 返回「菜品名称已存在」→ 该图随即 `GET /uploads/...` 变成 404，且库里零新增行。这条链路此前只有 mock 与真库测试覆盖，现在有了"真实 HTTP 请求 + 磁盘"的端到端证据。
+- **写入侧现在会去掉菜名与口味名两端的空白**（复核发现，已修）。这是个真洞，证据在排序规则上：
+
+  ```sql
+  select count(*) from dish where name = concat(name,' ')   -- 6  ← 尾随空格被忽略
+  select count(*) from dish where name = concat(' ',name)   -- 0  ← 前导空格被区分
+  ```
+
+  `dish.name` 是 `utf8mb3_bin`（PAD SPACE）：**只忽略尾随空格、区分前导空格**。所以 `" 鱼"` 与 `"鱼"` 是两行不同记录，能同时存在，在管理端列表里显示成一模一样的菜；而查询路径是 trim 过的，搜「鱼」两条都命中。库里没有任何东西会把它们规范化回来，`idx_dish_name` 这个唯一索引因此**永远拦不住这种"影子菜品"**——管理员在表单里名字前多敲一个空格就能造出来，而且之后删都删不掉重名。
+  - 修法是 `trimNames(dishDTO)`，在 `save` 与 `update` 里都**先于 validate** 调用：这样长度校验看到的就是真正要入库的值。纯空白的名字去掉后是空串，照旧由 validate 拒绝——trim 不是"把非法输入洗成合法输入"，这条有专门用例守着。
+  - 用 `String.trim()` 而不是 `strip()`：要与查询路径（`pageQuery`、`list`）同一个口径，两边不一致比"少去掉几个 Unicode 空格"更糟。
+  - 测试：`DishSaveTest` 补 2 项（入库值确实被 trim、去空白后为空仍被拒）、`DishDatabaseTest` 补 1 项——**这一项才是重点**：先存 `name`，再拿 `"  name  "` 新增，必须被唯一索引拒掉。修复前它会以 `code=1` 成功、库里多出一行看起来一模一样的菜，所以这条用例直接钉住了修复的目的，而不只是钉住"调用了 trim"。
+- **测试**：`DishDeleteTest` 由 22 项增到 29 项（新增七条：删除前先读图片的 `InOrder`、无人引用则删且顺序是先删表再删文件、别的菜品仍引用则不删、套餐仍引用则不删、OSS 地址既不被删也不被查、被守卫拒时连图片都不查、清理抛异常时响应仍成功且不影响后一张、以及"`isLocalPath` 自己抛"时响应仍成功）；新增 `DishDeleteImageDatabaseTest` 6 项（真库：删菜后图片从磁盘消失、共有图片在还有引用时保留/最后一个引用没了才删、**被拒时图片必须原样留着**、`image` 为 null 的菜能正常删、一批里混着本地图与 null 图、测试数据零残留）。测试总数由 204 项变为 214 项（13 项跳过）、`SKY_DB_TESTS=true` 下由 251 项变为 267 项。
+  - `DishDeleteImageDatabaseTest` **故意不加 `@Transactional`**（与第 18 节的 `DishImageRollbackDatabaseTest` 同一理由）：被验证的正是"事务提交时发生什么"，套一层测试事务只会把回调推迟到测试方法结束后再回滚，断言必然落空。所以它真实提交，并在 `@AfterEach` 里按名字删掉自己造的行与文件。
+  - 反过来，`DishDeleteTest` 是 mock 层、没有 Spring 事务，走的是清理逻辑的退化分支"删完表就地删"——两条分支各有一组测试覆盖，这一点是刻意安排的。
+- **踩过的一个坑（值得记下来）**：`isImageInUse` 多查了一次 `setmealMapper` 之后，`DishSaveTest` 与 `DishUpdateTest` 立刻红了——它们没有注入 `setmealMapper`（本类只测新增/修改，之前用不到），于是那次查询 NPE，而 **NPE 恰好被 `deleteUploadedImage` 的 catch-all 吞掉**，表现为"图片没被删"而不是测试报错。教训是：给清理逻辑的判据加协作者时，要同时检查所有构造该 Service 的测试；catch-all 能保住线上不炸，但会把编码错误伪装成数据问题。
+- **联调实测（后端 8080 段）**：真上传三张图 → 建一道菜并删掉 → 磁盘上的图**确实消失**；同一张图挂两道菜、只删一道 → 图**仍在**，把第二道也删掉 → 图才消失；起售的菜删除被拒 → 图**仍在**；日志里出现 2 行 `删除上传文件：/uploads/...`（与实际删掉的文件数一致）、0 条孤儿告警。测试数据已清空。
+- **意外收获：浏览器端到端被真实跑通了。** 排查一份数据变化时翻到第 23 节那台服务的日志，发现 15:16~15:17 有管理员在**浏览器**里操作（登录 → 菜品分页查询 → 删除），日志完整记录了这条链路：
+
+  ```text
+  15:16:20  批量删除菜品：ids=63
+  15:16:20  异常信息：起售中的菜品不能删除      ← 第 20 节的守卫在真实浏览器里生效
+  15:16:23  菜品起售停售：status=0, id=63       ← 点了「停售」，第 22 节那个接口
+  15:16:28  批量删除菜品：ids=63               ← 成功
+  15:17:09  批量删除菜品：ids=55,56,57,58       ← 批量勾选删除
+  15:17:50  批量删除菜品：ids=46,47,53,52,48,51,49,50,54
+  ```
+
+  这顺带回答了第 21、22 节那条"只做了 MockMvc 层验证，没有跑真实 nginx + 浏览器的端到端"的遗留疑问：**起售/停售与批量删除（含"起售不能删"守卫）在真实浏览器里都是通的**，前端跳转、确认弹窗、错误提示所依赖的契约都对。
+- **数据基线的一次变化（不是 bug，但要记下来）**：上面那次浏览器操作**删掉了 id 46~63 共 18 道存量菜品**（`dish` 从 24 行变成 6 行：只剩 id 64~69；`dish_flavor` 从 24 行变成 14 行，其中 11 行是历史孤儿）。这 18 道菜恰好是 image 为阿里云 OSS 绝对地址的那批，所以没有本地文件被连带删掉——与磁盘上只剩那 6 张本地图完全吻合，也说明本轮新写的清理逻辑没有误删。**库里现在是 6 菜品（全起售）/ 14 口味（含 11 条孤儿）。** 各项检查、`information_schema` 与 binlog（`log_bin=ON`、`binlog_format=ROW`）都确认了这一点：被删的行如果将来需要，可以从 binlog 精确恢复。
+- 当前运行态（本次快照）：后端 jar 以 PID 3693 运行，PID 文件 `/tmp/waimai-dishimage-server.pid`、日志 `/tmp/waimai-dishimage-server.log`。进程号是快照，后续操作前重新确认；改用 IDEA 启动前先停掉这个 jar，否则 8080 端口冲突。
+- **已知未处理项**：
+  - **删除仍然不可逆**：图片文件删掉就没了，没有回收站、没有软删除。在用判断能把误删风险压到"只有确实没人引用的图才会被删"，但它救不回已经删掉的文件。
+  - **进程在"提交成功"与"回调执行"之间被杀掉**：`afterCommit` 没跑到，磁盘上留下孤儿文件（与第 18 节那条对称）。
+  - **"是不是本次请求上传的"判断不了**：仍然只能判断"库里还有没有行引用它"。
+  - **并发新增与删除同一张图时，可能删掉别人正在引用的文件（TOCTOU，独立复核发现）**：`afterCommit` 里的 `countByImage` 只能看到**已提交**的行。请求 A 删除菜品甲（图 X，此刻没有别的引用）与请求 B 新增菜品乙（`image = X`）并发时——B 在校验 `localFileUtil.exists(X)` 那一刻文件还在、通过；B 尚未提交期间 A 的 `countByImage(X)` 读到 0、把 X 删掉；B 随后提交，于是**菜品乙指向一个已经不存在的文件**，正是这套设计要杜绝的那个状态。窗口是毫秒级、需要同时有两个管理端请求。与第 20 节已记录的守卫 TOCTOU 是同一类取舍（默认 REPEATABLE READ 下 `count` 是快照读，挡不住并发写），要根治只能给上传做元数据表、让文件生命周期真正跟着事务走，本次不做。**反向的并发无害**：两个删除请求共用一张图时，`LocalFileUtil.delete` 用的是 `deleteIfExists`，重复删是幂等的。
+  - **`order_detail` / `shopping_cart` 的快照副本**：如上，这两个模块落地时必须扩展在用判断，否则历史订单的图片会失效。
+  - **换图成功后旧图仍不删**（第 21 节的既有取舍）：本轮的清理只覆盖"删除菜品"，修改菜品换掉图片后旧图依旧是孤儿。要补的话可以复用同一套骨架（在 `update` 里比较新旧 image，提交后清理旧的），本轮没有做。

@@ -2,6 +2,7 @@ package com.sky.controller.admin;
 
 import com.sky.dto.DishDTO;
 import com.sky.dto.DishPageQueryDTO;
+import com.sky.entity.Dish;
 import com.sky.result.PageResult;
 import com.sky.result.Result;
 import com.sky.service.DishService;
@@ -19,6 +20,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 /**
  * 菜品管理
@@ -93,6 +96,63 @@ public class DishController {
         log.info("修改菜品：{}", dishDTO);
         dishService.updateWithFlavor(dishDTO);
         //与 POST /admin/dish、DELETE /admin/dish 同一取舍：接口文档把 data 标为非必须，前端只判 code。
+        return Result.success();
+    }
+
+    /**
+     * 根据分类id或名称查询菜品列表（不分页）
+     * <p>
+     * 前端契约（从已构建 bundle 的 source map 核对）：调用方是套餐页的选菜组件
+     * {@code setmeal/components/AddDish.vue}，它发两种形状——
+     * {@code queryDishList({categoryId: id})}（初始化与点分类时）和
+     * {@code queryDishList({name})}（关键字搜索，由 {@code @Watch('seachKey')} 触发）。
+     * 两个条件因此都做成可选、可叠加；接口文档只写了 {@code categoryId}，只实现它会让搜索那一支
+     * 因为缺参而 400。
+     * <p>
+     * **不过滤起售状态**：组件对 {@code status === 0} 的菜显式渲染「停售」标签，说明停售菜品本就
+     * 应当出现在这个列表里；套餐启售时另有 {@code SETMEAL_ENABLE_FAILED} 兜底。
+     * <p>
+     * 返回的是 {@code Dish} 实体而不是 {@code DishVO}：接口文档的响应模型列了
+     * {@code createTime}/{@code createUser}/{@code updateUser}，这三列只在实体上有。
+     * <p>
+     * {@code paths = "/list"} 不会抢走 {@code /{id}} 或 {@code /page}：Spring 的路径匹配里
+     * 字面量优先于变量（与第 19、21 节同一条规矩）。
+     *
+     * @param categoryId 分类id，可选
+     * @param name       菜品名称，可选，模糊匹配
+     * @return 菜品列表，没有命中时 data 是空数组而不是 null
+     */
+    @GetMapping("/list")
+    @ApiOperation("根据分类id查询菜品")
+    public Result<List<Dish>> list(@RequestParam(required = false) Long categoryId,
+                                   @RequestParam(required = false) String name) {
+        log.info("根据分类id或名称查询菜品：categoryId={}, name={}", categoryId, name);
+        return Result.success(dishService.list(categoryId, name));
+    }
+
+    /**
+     * 菜品起售、停售
+     * <p>
+     * 前端契约（从已构建 bundle 的 source map 核对）：列表页那一列的按钮调
+     * {@code dishStatusByStatus({id, status})}，拼成 {@code POST /dish/status/{status}?id=xx}，
+     * status 是 <b>字符串</b>（{@code row.status ? '0' : '1'}）——绑到 Integer 上没问题。
+     * 按钮的文案按当前状态取反（当前停售显示"启售"），所以到这里的 status 永远是切换后的目标值。
+     * <p>
+     * 页面工具栏只有「批量删除」和「+ 新建菜品」，没有批量启售/停售，所以 {@code id} 恒为单个菜品id。
+     * 那个 {@code statusHandle} 里 {@code typeof row === 'string'} 的批量分支（逗号拼 id）在本页
+     * 是死代码，本接口**不**接受逗号分隔的多个 id：绑不进 Long，会在进方法体之前以 400 失败。
+     *
+     * @param status 菜品状态，1为起售 0为停售
+     * @param id     菜品id
+     * @return 成功时 data 与 msg 均为 null
+     */
+    @PostMapping("/status/{status}")
+    @ApiOperation("菜品起售停售")
+    public Result<String> startOrStop(@PathVariable Integer status,
+                                      @RequestParam(required = false) Long id) {
+        log.info("菜品起售停售：status={}, id={}", status, id);
+        dishService.startOrStop(status, id);
+        //与新增、修改、删除同一取舍：接口文档把 data 标为非必须，前端只判 code。
         return Result.success();
     }
 

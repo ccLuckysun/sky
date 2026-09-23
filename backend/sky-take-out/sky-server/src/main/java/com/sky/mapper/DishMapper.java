@@ -74,6 +74,21 @@ public interface DishMapper {
     Integer countOnSaleByIds(@Param("ids") List<Long> ids);
 
     /**
+     * 查出这批菜品引用的图片路径。SQL 位于 resources/mapper/DishMapper.xml。
+     * <p>
+     * 调用方（{@code DishServiceImpl#deleteByIds}）必须在**删除之前**调用它：行一旦删掉，
+     * 就再也查不出这些菜品曾经引用过哪些图片，也就无从清理那些文件了。
+     * <p>
+     * 结果已去重、且不含 null（{@code image} 为 null 的行被 SQL 过滤掉）：同一个路径可能被多道菜
+     * 共用，重复删同一个文件没有意义。
+     * <p>
+     * 同样**不能**加 @AutoFill：只读查询，切面会拿 List 去反射调 setter 而抛异常。
+     * @param ids 待删除的菜品id，调用方需保证非空（空集合会拼出非法的 in ()）
+     * @return 这些菜品引用的本地上传/OSS 路径（这里不区分，筛本地的活由 LocalFileUtil 做）
+     */
+    List<String> listImagesByIds(@Param("ids") List<Long> ids);
+
+    /**
      * 按id批量删除菜品。SQL 位于 resources/mapper/DishMapper.xml。
      * <p>
      * 调用方（DishServiceImpl#deleteByIds）必须先删 dish_flavor 再调这里：两张表没有外键，
@@ -99,6 +114,19 @@ public interface DishMapper {
     @Select("select id, name, category_id, price, image, description, status, create_time, update_time,"
             + " create_user, update_user from dish where id = #{id}")
     Dish getById(Long id);
+
+    /**
+     * 按条件查询菜品列表（不分页），SQL 位于 resources/mapper/DishMapper.xml 的 list 映射。
+     * <p>
+     * 只认 {@code categoryId} 与 {@code name} 两个条件，都为空就返回全部菜品——调用方
+     * （{@code DishServiceImpl#list}）只填这两个字段，别的一律为 null，所以 {@code status}
+     * 之类的列**不会**参与筛选：本接口有意不过滤起售状态，理由见那一边的注释。
+     * <p>
+     * 同样**不能**加 @AutoFill：这是只读查询，切面会拿参数去反射调 setter，标上只会抛异常。
+     * @param dish 查询条件载体，只需要 categoryId / name 两个字段
+     * @return 命中的菜品实体列表（MyBatis 永远不会返回 null，空结果就是空列表）
+     */
+    List<Dish> list(Dish dish);
 
     /**
      * 根据id修改菜品，SQL 位于 resources/mapper/DishMapper.xml 的动态 update。
