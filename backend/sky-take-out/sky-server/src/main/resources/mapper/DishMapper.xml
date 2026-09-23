@@ -13,4 +13,31 @@
                 #{updateTime}, #{createUser}, #{updateUser})
     </insert>
 
+    <!-- 菜品分页查询：分页由 PageHelper 在此 SQL 之上追加 limit，并额外跑一次 count。
+         resultType 必须写全类名：application.yml 的 type-aliases-package 只配了 com.sky.entity，
+         短别名 DishVO 解析不到，写短名会在启动后第一次调用时抛 ClassNotFoundException。
+         join 必须是 left join：dish.category_id 上没有外键、可能悬空，
+         inner join 会让分类被删掉的菜品从列表里静默消失，列表总数也跟着对不上。
+         c.name as category_name 靠 map-underscore-to-camel-case 映射到 categoryName。
+         排序按最后操作时间倒序并追加 id 兜底：MySQL 不保证没有 order by 时的行序，
+         只按 update_time 排会在时间相同的行之间产生随机顺序，翻页时出现重复或漏行。 -->
+    <select id="pageQuery" resultType="com.sky.vo.DishVO">
+        select d.id, d.name, d.category_id, d.price, d.image, d.description,
+               d.status, d.update_time, c.name as category_name
+        from dish d
+        left join category c on d.category_id = c.id
+        <where>
+            <if test="name != null and name != ''">
+                and d.name like concat('%', #{name}, '%')
+            </if>
+            <if test="categoryId != null">
+                and d.category_id = #{categoryId}
+            </if>
+            <if test="status != null">
+                and d.status = #{status}
+            </if>
+        </where>
+        order by d.update_time desc, d.id desc
+    </select>
+
 </mapper>

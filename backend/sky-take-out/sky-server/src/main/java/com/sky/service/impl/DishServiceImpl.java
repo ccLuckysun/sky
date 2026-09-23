@@ -1,9 +1,12 @@
 package com.sky.service.impl;
 
+import com.github.pagehelper.Page;
+import com.github.pagehelper.PageHelper;
 import com.sky.constant.MessageConstant;
 import com.sky.constant.StatusConstant;
 import com.sky.context.BaseContext;
 import com.sky.dto.DishDTO;
+import com.sky.dto.DishPageQueryDTO;
 import com.sky.entity.Dish;
 import com.sky.entity.DishFlavor;
 import com.sky.exception.BaseException;
@@ -11,8 +14,10 @@ import com.sky.exception.UserNotLoginException;
 import com.sky.mapper.CategoryMapper;
 import com.sky.mapper.DishFlavorMapper;
 import com.sky.mapper.DishMapper;
+import com.sky.result.PageResult;
 import com.sky.service.DishService;
 import com.sky.utils.LocalFileUtil;
+import com.sky.vo.DishVO;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -259,6 +264,44 @@ public class DishServiceImpl implements DishService {
         //这是项目全局现状（employee 等表同样如此），不在这里单独处理。
         if (value.codePointCount(0, value.length()) > maxLength) {
             throw new BaseException(label + "不能超过" + maxLength + "个字符");
+        }
+    }
+
+    /**
+     * 菜品分页查询
+     * <p>
+     * 列表页的"分类"一列显示的是分类名称，SQL 里 left join category 取到 category_name 填进
+     * {@link DishVO#getCategoryName()}。菜品与分类之间没有外键，join 必须是 left：分类被删掉或
+     * category_id 悬空的菜品要照常出现在列表里，不能因为关联不上分类就静默消失。
+     * @param dishPageQueryDTO 查询参数
+     * @return 总记录数与当前页菜品
+     */
+    public PageResult pageQuery(DishPageQueryDTO dishPageQueryDTO) {
+        if (dishPageQueryDTO == null) {
+            throw new BaseException(MessageConstant.PAGE_PARAM_ERROR);
+        }
+        int page = dishPageQueryDTO.getPage();
+        int pageSize = dishPageQueryDTO.getPageSize();
+        // page、pageSize 是基本类型，查询参数缺失时默认为 0，会生成非法的 limit，必须先拦截。
+        if (page < 1 || pageSize < 1) {
+            throw new BaseException(MessageConstant.PAGE_PARAM_ERROR);
+        }
+
+        //名称两端空白不参与匹配：' 鱼 ' 去空白后才是用户想搜的"鱼"；纯空白等同于不筛选，
+        //否则 like '% %' 会把语义悄悄变成"名称里含空格"，查不到任何数据。
+        if (dishPageQueryDTO.getName() != null) {
+            String name = dishPageQueryDTO.getName().trim();
+            dishPageQueryDTO.setName(name.isEmpty() ? null : name);
+        }
+
+        try {
+            PageHelper.startPage(page, pageSize);
+            Page<DishVO> result = dishMapper.pageQuery(dishPageQueryDTO);
+            // total 来自 PageHelper 的 count 查询，与当前页取了几条无关。
+            return new PageResult(result.getTotal(), result.getResult());
+        } finally {
+            //分页参数存放在 ThreadLocal，查询未真正执行时不会被 PageHelper 清掉，必须显式清理以免污染复用的线程。
+            PageHelper.clearPage();
         }
     }
 

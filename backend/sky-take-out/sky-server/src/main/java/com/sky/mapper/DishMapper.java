@@ -1,8 +1,11 @@
 package com.sky.mapper;
 
+import com.github.pagehelper.Page;
 import com.sky.annotation.AutoFill;
+import com.sky.dto.DishPageQueryDTO;
 import com.sky.entity.Dish;
 import com.sky.enumeration.OperationType;
+import com.sky.vo.DishVO;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Select;
 
@@ -41,5 +44,17 @@ public interface DishMapper {
      */
     @Select("select count(id) from dish where image = #{image}")
     int countByImage(String image);
+
+    /**
+     * 分页查询菜品，SQL 位于 resources/mapper/DishMapper.xml 的 pageQuery 映射。
+     * 调用前必须先用 PageHelper.startPage 设置分页参数，返回的 Page 才能读到总记录数。
+     * <p>
+     * 这条方法上不能加 @AutoFill：AutoFillAspect 的切点是 com.sky.mapper 包里所有标了该注解的方法，
+     * 且会把第一个参数当实体反射调用其 setter。这里的参数是查询条件 DTO，标上注解会在切面里抛
+     * IllegalStateException（找不到对应的公共字段 setter），把一次普通查询变成 500。
+     * @param dishPageQueryDTO 查询参数（name 模糊、categoryId、status 均为可选）
+     * @return 携带 total 的分页结果，每条记录带分类名称
+     */
+    Page<DishVO> pageQuery(DishPageQueryDTO dishPageQueryDTO);
 
 }
