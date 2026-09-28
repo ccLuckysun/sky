@@ -20,6 +20,7 @@ public class MessageConstant {
     public static final String DISH_NAME_ALREADY_EXISTS = "菜品名称已存在";
     public static final String DISH_NOT_FOUND = "菜品不存在";
     public static final String DISH_STATUS_ERROR = "菜品状态值不合法，只能为1(起售)或0(停售)";
+    public static final String SHOP_STATUS_ERROR = "店铺营业状态值不合法，只能为1(营业)或0(打烊)";
     public static final String DISH_IMAGE_NOT_FOUND = "图片文件不存在，请重新上传";
     public static final String ACCOUNT_LOCKED = "账号被锁定";
     public static final String UNKNOWN_ERROR = "未知错误";
