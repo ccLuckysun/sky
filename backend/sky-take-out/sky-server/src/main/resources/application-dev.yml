@@ -6,3 +6,12 @@ sky:
     database: sky_take_out
     username: root
     password: 030901
+  redis:
+    host: localhost
+    port: 6379
+    # 本机 Redis 没设 requirepass，留空就是"不鉴权"；留空或写 "" 都可以，
+    # application.yml 里那个占位符自带空串默认值（原因见那边的注释）。
+    password:
+    # 用 0 号库。写成具体的 0 而不是留空：留空是 YAML null，绑定到 Integer 型的
+    # spring.redis.database 上要靠 Boot 的"空串当 null"兜底，写明确值就不用赌这个。
+    database: 0

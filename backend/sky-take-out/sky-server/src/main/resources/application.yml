@@ -22,6 +22,22 @@ spring:
       url: jdbc:mysql://${sky.datasource.host}:${sky.datasource.port}/${sky.datasource.database}?serverTimezone=Asia/Shanghai&useUnicode=true&characterEncoding=utf-8&zeroDateTimeBehavior=convertToNull&useSSL=false&allowPublicKeyRetrieval=true
       username: ${sky.datasource.username}
       password: ${sky.datasource.password}
+  redis:
+    # 前缀必须是 spring.redis.*：本项目是 Boot 2.7.3，换成 3.x 的 spring.data.redis.*
+    # 整块会被**静默忽略**（不报错、不警告），连接退回 localhost:6379 的默认值——
+    # 在本机恰好是对的，所以这个错本地永远测不出来，一上服务器才炸。
+    host: ${sky.redis.host}
+    port: ${sky.redis.port}
+    # 本机 Redis 未开访问控制，这一项就是空的。写成带空串默认值的占位符，是因为
+    # dev 那边无论写 `password:`（YAML 解析成 null）还是干脆不写，${} 都能解析到 ""，
+    # 不会出现 "Could not resolve placeholder" 把应用拦在启动阶段。空串经
+    # RedisPassword.of 归一成 none()，Lettuce 不发 AUTH（发了会得到
+    # ERR Client sent AUTH, but no password is set）。
+    password: ${sky.redis.password:}
+    # 0 号库是 Redis 默认库（本机 CONFIG GET databases = 16 个库，keyspace 全空）。
+    database: ${sky.redis.database}
+    # 不写 spring.redis.lettuce.pool.*：连接池要 classpath 上有 commons-pool2 才生效，
+    # 本项目没引它，配了会启动失败。默认的 Lettuce 共享原生连接对本项目足够。
 
 mybatis:
   #mapper配置文件
